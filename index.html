@@ -1208,6 +1208,21 @@ body {
 .war-compare-vs { text-align: center; font-size: 14px; color: var(--gold); font-weight: 700; }
 .war-target-desc { font-size: 10px; color: var(--text-muted); line-height: 1.5; }
 
+/* 部队选择行 */
+.war-unit-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 7px; padding: 9px 11px; margin-bottom: 7px;
+  cursor: pointer; transition: all 0.18s;
+}
+.war-unit-row:hover { border-color: var(--border-h); background: var(--bg-hover); }
+.war-unit-row.selected { border-color: #c9a84c; background: rgba(201,168,76,0.09); }
+.war-unit-check { font-size: 16px; color: var(--gold); line-height: 1; margin-top: 1px; flex-shrink: 0; }
+.war-unit-info { flex: 1; min-width: 0; }
+.war-unit-name { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.war-unit-stats { display: flex; flex-wrap: wrap; gap: 6px; }
+.war-unit-stat-item { font-size: 10px; color: var(--text-dim); }
+
 /* 战役界面 */
 .war-battle-header { margin-bottom: 10px; }
 .war-battle-title { font-size: 13px; font-weight: 700; color: var(--gold); margin-bottom: 6px; }

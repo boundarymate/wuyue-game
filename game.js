@@ -4208,14 +4208,22 @@ function doPreparWar(){
 }
 
 // ── 宣战弹窗 ──────────────────────────────────────
+// ── 宣战弹窗状态 ──
+let _selectedWarTarget = null;
+let _warStep = 1; // 1=选目标 2=选部队
+
 function openDeclareWarModal(){
   const modal = document.getElementById('war-declare-modal');
   if(!modal) return;
+  _selectedWarTarget = null;
+  _warStep = 1;
+  _renderDeclareWarStep1();
+  modal.classList.add('show');
+}
 
-  // 可宣战目标（排除后周——太强，排除自己）
+// 第一步：选择宣战目标
+function _renderDeclareWarStep1(){
   const targets = NATIONS.filter(n=>n.id!=='wuyue_self' && n.id!=='zhou' && WAR_ENEMY_CONFIG[n.id]);
-
-  // 我方总兵力
   const myTroops = MILITARY_UNITS.reduce((s,u)=>s+u.troops,0);
   const myMorale = Math.round(MILITARY_UNITS.reduce((s,u)=>s+u.morale,0)/MILITARY_UNITS.length);
   const myCombat = Math.round(MILITARY_UNITS.reduce((s,u)=>s+u.combat,0)/MILITARY_UNITS.length);
@@ -4235,7 +4243,7 @@ function openDeclareWarModal(){
       </div>
       <div class="war-compare-grid">
         <div class="war-compare-side">
-          <div class="war-compare-label">吴越</div>
+          <div class="war-compare-label">吴越（全军）</div>
           <div class="war-compare-val" style="color:#c9a84c">${myTroops}千兵</div>
           <div class="war-compare-val">战力 ${myCombat}</div>
           <div class="war-compare-val">士气 ${myMorale}</div>
@@ -4252,44 +4260,166 @@ function openDeclareWarModal(){
     </div>`;
   }).join('');
 
+  document.querySelector('.war-modal-title').textContent = '⚔️ 宣战出征 · 第一步：选择目标';
   document.getElementById('war-declare-body').innerHTML = targetCards;
-  document.getElementById('war-declare-confirm').disabled = true;
-  document.getElementById('war-declare-confirm').dataset.target = '';
-  modal.classList.add('show');
+  const btn = document.getElementById('war-declare-confirm');
+  btn.disabled = true;
+  btn.textContent = '下一步：调兵遣将 →';
+  btn.onclick = _goToWarStep2;
 }
 
-let _selectedWarTarget = null;
 function selectWarTarget(nationId, el){
   _selectedWarTarget = nationId;
   document.querySelectorAll('.war-target-card').forEach(c=>c.classList.remove('selected'));
   el.classList.add('selected');
+  document.getElementById('war-declare-confirm').disabled = false;
+}
+
+// 第二步：选择调动哪些部队
+function _goToWarStep2(){
+  if(!_selectedWarTarget) return;
+  _warStep = 2;
+  _renderDeclareWarStep2();
+}
+
+function _renderDeclareWarStep2(){
+  const cfg = WAR_ENEMY_CONFIG[_selectedWarTarget];
+  const nation = NATIONS.find(n=>n.id===_selectedWarTarget);
+
+  const unitRows = MILITARY_UNITS.map(u=>{
+    const commander = MILITARY_OFFICIALS.find(o=>o.id===u.commander);
+    const cmdName = commander ? commander.name : '—';
+    return `<div class="war-unit-row" id="war-unit-row-${u.id}" onclick="toggleWarUnit('${u.id}',this)">
+      <div class="war-unit-check" id="war-unit-check-${u.id}">☐</div>
+      <div class="war-unit-info">
+        <div class="war-unit-name">${u.emoji} ${u.name}
+          <span style="font-size:9px;color:var(--text-muted);margin-left:4px">驻${u.location} · ${u.type}</span>
+        </div>
+        <div class="war-unit-stats">
+          <span class="war-unit-stat-item" style="color:#c9a84c">⚔ ${u.troops}千兵</span>
+          <span class="war-unit-stat-item">🔥 士气${u.morale}</span>
+          <span class="war-unit-stat-item">💪 战力${u.combat}</span>
+          <span class="war-unit-stat-item">📦 物资${u.supply}</span>
+          <span class="war-unit-stat-item" style="color:#aaa">主将：${cmdName}</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.querySelector('.war-modal-title').textContent = `⚔️ 出征${cfg.name} · 第二步：调兵遣将`;
+  document.getElementById('war-declare-body').innerHTML = `
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;padding:0 2px">
+      选择调动哪些部队出征（至少选一支）。未选中的部队留守本地。
+    </div>
+    <div id="war-unit-list">${unitRows}</div>
+    <div id="war-force-summary" style="margin-top:10px;padding:8px 10px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);border-radius:6px;font-size:11px">
+      <span style="color:var(--text-muted)">请选择部队</span>
+    </div>
+    <div style="margin-top:8px;padding:6px 10px;background:rgba(231,76,60,0.08);border:1px solid rgba(231,76,60,0.2);border-radius:6px;font-size:11px;color:var(--text-muted)">
+      敌方：${nation.emoji} ${cfg.name} — ${cfg.troops}千兵 · 战力${cfg.combat} · 士气${cfg.morale}
+    </div>`;
+
   const btn = document.getElementById('war-declare-confirm');
+  btn.disabled = true;
+  btn.textContent = '⚔️ 确认宣战出征';
+  btn.onclick = confirmDeclareWar;
+}
+
+// 勾选/取消部队
+function toggleWarUnit(unitId, el){
+  el.classList.toggle('selected');
+  const check = document.getElementById('war-unit-check-'+unitId);
+  check.textContent = el.classList.contains('selected') ? '☑' : '☐';
+  _updateWarForceSummary();
+}
+
+function _updateWarForceSummary(){
+  const selected = MILITARY_UNITS.filter(u=>
+    document.getElementById('war-unit-row-'+u.id)?.classList.contains('selected')
+  );
+  const btn = document.getElementById('war-declare-confirm');
+  const summary = document.getElementById('war-force-summary');
+  if(!summary) return;
+
+  if(selected.length===0){
+    summary.innerHTML = '<span style="color:var(--text-muted)">请选择部队</span>';
+    btn.disabled = true;
+    return;
+  }
+
+  const totalTroops = selected.reduce((s,u)=>s+u.troops, 0);
+  const avgMorale   = Math.round(selected.reduce((s,u)=>s+u.morale*u.troops, 0) / totalTroops);
+  const avgCombat   = Math.round(selected.reduce((s,u)=>s+u.combat*u.troops, 0) / totalTroops);
+  const avgSupply   = Math.round(selected.reduce((s,u)=>s+u.supply*u.troops, 0) / totalTroops);
+  const names = selected.map(u=>u.name).join('、');
+
+  // 找能力最高的指挥官（从选中部队的主将里选）
+  const commanders = selected.map(u=>MILITARY_OFFICIALS.find(o=>o.id===u.commander)).filter(Boolean);
+  const bestCmd = commanders.sort((a,b)=>b.ability-a.ability)[0];
+
+  const cfg = WAR_ENEMY_CONFIG[_selectedWarTarget];
+  const powerRatio = (totalTroops*avgCombat)/(cfg.troops*cfg.combat);
+  const powerColor = powerRatio>=1.5?'#2ecc71':powerRatio>=0.8?'#f39c12':'#e74c3c';
+  const powerText  = powerRatio>=1.5?'优势':powerRatio>=0.8?'均势':'劣势';
+
+  summary.innerHTML = `
+    <div style="color:#c9a84c;font-weight:bold;margin-bottom:4px">出征兵力汇总</div>
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <span>📋 ${names}</span>
+    </div>
+    <div style="display:flex;gap:12px;margin-top:4px;flex-wrap:wrap">
+      <span style="color:#c9a84c">⚔ 总兵力 <b>${totalTroops}千</b></span>
+      <span>🔥 士气 <b>${avgMorale}</b></span>
+      <span>💪 战力 <b>${avgCombat}</b></span>
+      <span>📦 物资 <b>${avgSupply}</b></span>
+    </div>
+    <div style="margin-top:4px">
+      主将：<b>${bestCmd ? bestCmd.name : '—'}</b>
+      &nbsp;|&nbsp; 胜算：<span style="color:${powerColor};font-weight:bold">${powerText}</span>
+    </div>`;
   btn.disabled = false;
-  btn.dataset.target = nationId;
 }
 
 function closeDeclareWarModal(){
   document.getElementById('war-declare-modal').classList.remove('show');
   _selectedWarTarget = null;
+  _warStep = 1;
 }
 
 function confirmDeclareWar(){
-  const targetId = _selectedWarTarget;
-  if(!targetId) return;
+  if(!_selectedWarTarget) return;
+  // 收集选中的部队 id
+  const selectedUnitIds = MILITARY_UNITS
+    .filter(u=>document.getElementById('war-unit-row-'+u.id)?.classList.contains('selected'))
+    .map(u=>u.id);
+  if(selectedUnitIds.length===0){ showToast('请至少选择一支部队出征！','warn'); return; }
   closeDeclareWarModal();
-  startWar(targetId);
+  startWar(_selectedWarTarget, selectedUnitIds);
 }
 
 // ── 开战初始化 ──────────────────────────────────────
-function startWar(targetId){
+function startWar(targetId, selectedUnitIds){
   const cfg = WAR_ENEMY_CONFIG[targetId];
   const nation = NATIONS.find(n=>n.id===targetId);
   if(!cfg||!nation) return;
 
-  // 选择我方主力部队（战力最高的）
-  const mainUnit = [...MILITARY_UNITS].sort((a,b)=>b.combat-a.combat)[0];
-  // 选择指挥官（军事将领中能力最高的）
-  const commander = [...MILITARY_OFFICIALS].sort((a,b)=>b.ability-a.ability)[0];
+  // 确定出征部队（传入 selectedUnitIds 则用选中的，否则取全部）
+  const unitIds = (selectedUnitIds && selectedUnitIds.length > 0)
+    ? selectedUnitIds
+    : MILITARY_UNITS.map(u=>u.id);
+  const selectedUnits = MILITARY_UNITS.filter(u=>unitIds.includes(u.id));
+
+  // 合计兵力
+  const totalTroops = selectedUnits.reduce((s,u)=>s+u.troops, 0);
+  // 加权平均（按兵力加权）
+  const avgMorale  = Math.round(selectedUnits.reduce((s,u)=>s+u.morale*u.troops, 0) / totalTroops);
+  const avgCombat  = Math.round(selectedUnits.reduce((s,u)=>s+u.combat*u.troops, 0) / totalTroops);
+  const avgSupply  = Math.round(selectedUnits.reduce((s,u)=>s+u.supply*u.troops, 0) / totalTroops);
+
+  // 选能力最高的主将（从出征部队的主将里选）
+  const commanders = selectedUnits.map(u=>MILITARY_OFFICIALS.find(o=>o.id===u.commander)).filter(Boolean);
+  const commander  = commanders.sort((a,b)=>b.ability-a.ability)[0]
+    || [...MILITARY_OFFICIALS].sort((a,b)=>b.ability-a.ability)[0];
 
   G.war = {
     targetId,
@@ -4300,10 +4430,10 @@ function startWar(targetId){
     phase: 'battle',   // battle | peace_offer | ended
     myForce: {
       name: '吴越军',
-      troops: mainUnit.troops,
-      morale: mainUnit.morale,
-      supply: mainUnit.supply,
-      combat: mainUnit.combat,
+      troops: totalTroops,
+      morale: avgMorale,
+      supply: avgSupply,
+      combat: avgCombat,
       commanderId: commander.id,
       commanderName: commander.name,
       commanderAbility: commander.ability
