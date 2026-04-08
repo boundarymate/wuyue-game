@@ -70,6 +70,21 @@ const G = {
   activeDisaster: null,      // 当前活跃灾害 {type,severity,turn,prefId}
   // ── F项：商路 ──
   tradeRoutes: [],           // 已开辟商路 [{id,name,partner,income,turnsActive,blocked}]
+  // ── 新A项：科举周期 ──
+  examCycle: 0,              // 距上次科举已过年数（每3年自动触发）
+  examInvestment: 0,         // 本届科举投入资金（万贯，影响士子质量）
+  // ── 新B项：人口发展 ──
+  prefPopulation: {},        // 各州人口 {prefId: 万人}（初始由PREFECTURES.population决定）
+  migrationDone: false,      // 本年是否已执行移民实边
+  // ── 新C项：军队训练 ──
+  trainingOrders: [],        // 训练命令列表 [{unitId, turns, grainCost, startTurn}]
+  // ── 新D项：情报细作 ──
+  spyMissions: [],           // 细作任务 [{targetId, targetName, status, result, turn}]
+  intelRevealed: {},         // 已揭露的邻国真实数据 {nationId: {troops,morale,...}}
+  // ── 新E项：王位继承 ──
+  heirs: [],                 // 子嗣列表 [{id,name,age,ability,loyalty,isCrownPrince,trait}]
+  crownPrinceId: null,       // 当前太子id
+  successionCrisis: false,   // 是否处于储位之争
 };
 
 // ===================================================
@@ -1687,6 +1702,18 @@ function renderMilitaryDetail(){
   const totalWins   = MILITARY_UNITS.reduce((s,u)=>s+u.battleRecord.wins,0);
   const totalLosses = MILITARY_UNITS.reduce((s,u)=>s+u.battleRecord.losses,0);
 
+  // 训练中的部队
+  const trainingUnits = (G.trainingOrders||[]).map(o=>{
+    const u = MILITARY_UNITS.find(x=>x.id===o.unitId);
+    return u ? `<div class="syd-warn-item" style="color:#3498db">🏋️ <b>${u.name}</b> 训练中（剩余${o.turns}年，完成后战力+${o.combatGain}）</div>` : '';
+  }).join('') || '<div class="syd-warn-none">暂无训练任务</div>';
+
+  // 细作任务
+  const activeSpy = (G.spyMissions||[]).filter(m=>m.status==='active');
+  const spyHtml = activeSpy.length > 0
+    ? activeSpy.map(m=>`<div class="syd-warn-item" style="color:#9b59b6">🕵️ <b>${m.missionLabel}</b> → ${m.targetName}（剩余${m.turnsLeft}年）</div>`).join('')
+    : '<div class="syd-warn-none">暂无细作任务</div>';
+
   return `<div class="syd-section">
     <div class="syd-section-title">⚔️ 军队总览</div>
     <div class="mil-overview-grid">
@@ -1696,6 +1723,14 @@ function renderMilitaryDetail(){
       <div class="mil-ov-item"><div class="mil-ov-val" style="color:${avgCombat>=70?'#2ecc71':'#f39c12'}">${avgCombat}</div><div class="mil-ov-key">平均战力</div></div>
       <div class="mil-ov-item"><div class="mil-ov-val" style="color:${avgGrain>=70?'#2ecc71':'#f39c12'}">${avgGrain}</div><div class="mil-ov-key">平均粮草</div></div>
       <div class="mil-ov-item"><div class="mil-ov-val">${totalWins}胜${totalLosses}负</div><div class="mil-ov-key">历史战绩</div></div>
+    </div>
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">🏋️ 训练任务 <button onclick="openTrainArmyModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(52,152,219,0.15);border:1px solid rgba(52,152,219,0.3);border-radius:4px;color:#3498db;cursor:pointer">+ 下令训练</button></div>
+      ${trainingUnits}
+    </div>
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">🕵️ 细作任务 <button onclick="openSpyModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(155,89,182,0.15);border:1px solid rgba(155,89,182,0.3);border-radius:4px;color:#9b59b6;cursor:pointer">+ 派遣细作</button></div>
+      ${spyHtml}
     </div>
     <div class="mil-unit-list">${cards}</div>
   </div>`;
@@ -1838,6 +1873,27 @@ function renderZhengwuDetail(){
     <div class="syd-warn-section">
       <div class="syd-warn-title">📍 空缺州郡</div>
       ${vacantPref}
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">📜 科举 <span style="font-size:10px;color:var(--text-muted)">距下届${3-(G.examCycle||0)}年</span></div>
+      <div class="syd-warn-none">每3年自动开科，可在事件中选择投入规模提升士子质量</div>
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">👥 人口 <span style="font-size:10px;color:var(--text-muted)">总计${G.stats.population}万</span> <button onclick="openMigrationModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(46,204,113,0.15);border:1px solid rgba(46,204,113,0.3);border-radius:4px;color:#2ecc71;cursor:pointer">移民实边</button></div>
+      <div class="syd-warn-none">各州人口每年自然增长，可通过移民实边开发边疆</div>
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">👑 王室继承 <button onclick="openHeirModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:4px;color:#c9a84c;cursor:pointer">查看子嗣</button></div>
+      ${(()=>{
+        if(!G.heirs || G.heirs.length===0) return '<div class="syd-warn-item" style="color:#e74c3c">⚠ 大王尚无子嗣，储位悬空！</div>';
+        const crown = G.heirs.find(h=>h.isCrownPrince);
+        const crownText = crown ? `<div class="syd-warn-none">👑 太子：${crown.name}（${crown.age}岁，能力${crown.ability}，培养度${crown.education}）</div>` : '<div class="syd-warn-item" style="color:#f39c12">⚠ 尚未册立太子</div>';
+        const otherCount = G.heirs.length - (crown?1:0);
+        return crownText + (otherCount>0?`<div class="syd-warn-none" style="color:var(--text-muted)">另有${otherCount}位皇子</div>`:'');
+      })()}
     </div>
   </div>`;
 }
@@ -2916,6 +2972,18 @@ function _doEndYear(){
   _checkAnnualDisaster();
   // D项：邻国使者生成
   _generateEnvoyEvents();
+  // 新A项：科举周期检查（每3年自动触发）
+  _checkExamCycle();
+  // 新B项：各州人口自然增长
+  _doPopulationGrowth();
+  // 新C项：军队训练进度推进
+  _advanceTrainingOrders();
+  // 新D项：细作任务结算
+  _resolveSpyMissions();
+  // 新E项：子嗣成长与储位检查
+  _doHeirGrowth();
+  // 重置本年移民标记
+  G.migrationDone = false;
 
   updateStats();
   renderActions();
@@ -3024,6 +3092,20 @@ function startGame(){
   G.envoyQueue=[];
   G.activeDisaster=null;
   G.tradeRoutes=[];
+  G.examCycle=0;
+  G.examInvestment=0;
+  G.prefPopulation={};
+  G.migrationDone=false;
+  G.trainingOrders=[];
+  G.spyMissions=[];
+  G.intelRevealed={};
+  G.heirs=[];
+  G.crownPrinceId=null;
+  G.successionCrisis=false;
+  // 初始化各州人口
+  PREFECTURES.forEach(p=>{ G.prefPopulation[p.id] = p.population || Math.round(G.stats.population/PREFECTURES.length); });
+  // 初始化子嗣（钱弘俶28岁，初始有1-2个幼子）
+  _initHeirs();
   // 重置军队单位
   MILITARY_UNITS.forEach(u=>{ u.morale=Math.max(60,u.morale); u.supply=Math.max(60,u.supply); });
   // 重置NATIONS关系
@@ -4827,10 +4909,13 @@ function _renderDeclareWarStep2(){
   const unitRows = MILITARY_UNITS.map(u=>{
     const commander = MILITARY_OFFICIALS.find(o=>o.id===u.commander);
     const cmdName = commander ? commander.name : '—';
-    const isAllowed = allowed.includes(u.id);
+    const isTraining = !!(G.trainingOrders||[]).find(o=>o.unitId===u.id);
+    const isAllowed = allowed.includes(u.id) && !isTraining;
     const disabledAttr = isAllowed ? '' : 'data-disabled="true"';
     const disabledStyle = isAllowed ? '' : 'opacity:0.45;cursor:not-allowed;';
-    const disabledTag = isAllowed ? '' : `<span style="font-size:9px;color:#e74c3c;margin-left:6px">⛔ 地理不符</span>`;
+    const disabledTag = isTraining
+      ? `<span style="font-size:9px;color:#3498db;margin-left:6px">🏋️ 训练中，不可出征</span>`
+      : (!isAllowed ? `<span style="font-size:9px;color:#e74c3c;margin-left:6px">⛔ 地理不符</span>` : '');
     const clickHandler = isAllowed ? `onclick="toggleWarUnit('${u.id}',this)"` : '';
     return `<div class="war-unit-row" id="war-unit-row-${u.id}" ${clickHandler} ${disabledAttr} style="${disabledStyle}">
       <div class="war-unit-check" id="war-unit-check-${u.id}">${isAllowed ? '☐' : '✕'}</div>
@@ -5656,6 +5741,15 @@ function serializeGame(){
     envoyQueue: G.envoyQueue,
     activeDisaster: G.activeDisaster,
     tradeRoutes: G.tradeRoutes,
+    examCycle: G.examCycle,
+    examInvestment: G.examInvestment,
+    prefPopulation: G.prefPopulation,
+    trainingOrders: G.trainingOrders,
+    spyMissions: G.spyMissions,
+    intelRevealed: G.intelRevealed,
+    heirs: G.heirs,
+    crownPrinceId: G.crownPrinceId,
+    successionCrisis: G.successionCrisis,
     // 可变数据：官员、军队、州郡、外交
     officials: {
       court:    COURT_OFFICIALS.map(o=>({ id:o.id, age:o.age, loyalty:o.loyalty, ability:o.ability })),
@@ -5695,6 +5789,16 @@ function deserializeGame(data){
   G.envoyQueue    = data.envoyQueue || [];
   G.activeDisaster= data.activeDisaster || null;
   G.tradeRoutes   = data.tradeRoutes || [];
+  G.examCycle     = data.examCycle || 0;
+  G.examInvestment= data.examInvestment || 0;
+  G.prefPopulation= data.prefPopulation || {};
+  G.migrationDone = false;
+  G.trainingOrders= data.trainingOrders || [];
+  G.spyMissions   = data.spyMissions || [];
+  G.intelRevealed = data.intelRevealed || {};
+  G.heirs         = data.heirs || [];
+  G.crownPrinceId = data.crownPrinceId || null;
+  G.successionCrisis = data.successionCrisis || false;
 
   // 恢复官员可变属性
   if(data.officials){
@@ -6370,6 +6474,831 @@ function confirmPlanTroops(){
     desc:`${unit.name}的兵种构成已按新方案调整：步兵${vals.infantry}%、骑兵${vals.cavalry}%、弓弩${vals.archers}%、水军${vals.navy}%、辎重${vals.engineers}%。新的战术配置将在下次演练后充分发挥效果。`,
     effects:{ military:+1 }, type:'good'
   }, ()=>showIdleState());
+}
+
+// ===================================================
+//  新A项：科举升级系统
+// ===================================================
+
+// 科举投入档次配置
+const EXAM_INVEST_TIERS = [
+  { id:'none',   label:'不额外投入', cost:0,  qualityBonus:0,  countBonus:0,  desc:'按惯例举行，士子质量一般' },
+  { id:'modest', label:'适度投入',   cost:15, qualityBonus:8,  countBonus:1,  desc:'增加考场、延请名师，士子质量有所提升' },
+  { id:'lavish', label:'重金投入',   cost:35, qualityBonus:18, countBonus:2,  desc:'广开恩科、重金延师，吸引天下英才赴考' },
+  { id:'grand',  label:'盛世恩科',   cost:60, qualityBonus:30, countBonus:3,  desc:'大开恩科、遍访名士，此届必出栋梁之才' },
+];
+
+// 检查科举周期（每3年自动触发）
+function _checkExamCycle(){
+  G.examCycle = (G.examCycle || 0) + 1;
+  if(G.examCycle >= 3){
+    G.examCycle = 0;
+    // 触发科举弹窗（加入事件队列，年初处理）
+    G.yearEvents.unshift({
+      id: `exam_auto_${G.turn}`,
+      tag: 'culture', tagText: '科举',
+      title: `第${yearStr(G.turn)}年科举开科`,
+      scene: `三年一届的科举之期已至，礼部奏请开科取士，广纳天下英才为国效力。大王可决定本届科举的投入规模，以影响士子质量。`,
+      desc: '',
+      choices: EXAM_INVEST_TIERS.map(tier=>({
+        label: `【${tier.label}】`,
+        text: tier.desc + (tier.cost>0?`（花费${tier.cost}万贯）`:''),
+        effect: tier.cost>0 ? { culture: Math.round(tier.qualityBonus/3) } : {},
+        onConfirm: ()=>{
+          if(tier.cost > 0){
+            if(G.budget - G.budgetUsed < tier.cost){
+              showToast('预算不足，改为不额外投入', 'warn');
+              G.examInvestment = 0;
+            } else {
+              spendBudget(tier.cost);
+              G.examInvestment = tier.id;
+            }
+          } else {
+            G.examInvestment = 'none';
+          }
+          // 延迟触发科举弹窗
+          setTimeout(()=>openExamModalEnhanced(), 300);
+        },
+        result: { icon:'📜', title:`${tier.label}科举`, desc:`本届科举${tier.desc}，即将放榜。`, type:'neutral' }
+      })),
+    });
+    addHistory(`📜 三年科举之期已至，礼部奏请开科取士。`, 'good');
+  }
+}
+
+// 增强版科举弹窗（支持投入加成）
+function openExamModalEnhanced(){
+  const tier = EXAM_INVEST_TIERS.find(t=>t.id===G.examInvestment) || EXAM_INVEST_TIERS[0];
+  const baseCount = 3 + Math.floor(G.stats.culture/25);
+  const count = baseCount + tier.countBonus;
+  const cheatChance = Math.max(0, 0.15 - G.stats.culture*0.001 - (tier.qualityBonus*0.002));
+  const cheated = Math.random() < cheatChance;
+
+  G.scholars = [];
+  for(let i=0;i<count;i++) G.scholars.push(generateScholarEnhanced(tier.qualityBonus));
+
+  const sub = document.getElementById('exam-modal-sub');
+  const vacantCount = getVacantSlots().length;
+  const tierLabel = tier.id!=='none' ? `（${tier.label}，质量加成+${tier.qualityBonus}）` : '';
+
+  sub.textContent = cheated
+    ? `⚠️ 本届科举发现舞弊迹象！共录取 ${count} 名士子${tierLabel}，当前空缺官职 ${vacantCount} 个`
+    : `本届共录取 ${count} 名士子${tierLabel}，当前空缺官职 ${vacantCount} 个，请大王为每位进士钦点官职`;
+
+  if(cheated){
+    applyEffects({culture:-4, people:-3});
+    addHistory('科举发现舞弊，文治声誉受损','bad');
+  } else {
+    applyEffects({culture:+5 + Math.round(tier.qualityBonus/5)});
+  }
+
+  renderExamScholarsEnhanced();
+  document.getElementById('exam-modal').classList.add('show');
+}
+
+// 增强版士子生成（带质量加成和专长匹配空缺）
+function generateScholarEnhanced(qualityBonus){
+  const s = generateScholar();
+  s.ability = Math.min(98, s.ability + Math.round(qualityBonus * (0.5 + Math.random()*0.5)));
+  // 检查是否有对应专长的空缺，若有则标记推荐
+  const vacants = getVacantSlots();
+  const matchedSlots = vacants.filter(sl=>sl.skillPref.includes(s.skill));
+  s.recommendedSlot = matchedSlots.length > 0 ? matchedSlots[0].id : null;
+  s.recommendedSlotTitle = matchedSlots.length > 0 ? matchedSlots[0].title : null;
+  return s;
+}
+
+// 增强版科举渲染（显示推荐职位）
+function renderExamScholarsEnhanced(){
+  const body = document.getElementById('exam-modal-body');
+  if(!body){ renderExamScholars(); return; }
+
+  const vacant = getVacantSlots();
+  const takenSlots = ()=> new Set(G.scholars.map(s=>s.assignedSlot).filter(Boolean));
+
+  body.innerHTML = G.scholars.map((s,i)=>{
+    const rankColor = s.rank==='状元'?'#e8c97a':s.rank==='榜眼'?'#c0c0c0':s.rank==='探花'?'#cd7f32':'var(--text-dim)';
+    const taken = takenSlots();
+    const buildGroup = (cat, label) => {
+      const slots = vacant.filter(sl=>sl.category===cat).sort((a,b)=>a.rank-b.rank);
+      if(slots.length===0) return '';
+      const opts = slots.map(slot=>{
+        const isMe = slot.id===s.assignedSlot;
+        const isTaken = !isMe && taken.has(slot.id);
+        const matchMark = slot.skillPref.includes(s.skill) ? '★' : '　';
+        const rankStr = RANK_LABEL[slot.rank]||`${slot.rank}品`;
+        const prefix = isTaken ? '[已选] ' : '';
+        return `<option value="${slot.id}" ${isMe?'selected':''} ${isTaken?'disabled':''}>
+          ${prefix}${matchMark} [${rankStr}] ${slot.title}
+        </option>`;
+      }).join('');
+      return `<optgroup label="── ${label} ──">${opts}</optgroup>`;
+    };
+    const options = buildGroup('court','朝廷') + buildGroup('civil','州郡') + buildGroup('military','军队');
+    const selectedSlot = s.assignedSlot ? OFFICE_ROSTER.find(sl=>sl.id===s.assignedSlot) : null;
+    const slotDesc = selectedSlot
+      ? `<div class="esc-slot-desc">${selectedSlot.emoji} ${selectedSlot.desc}</div>`
+      : `<div class="esc-slot-desc" style="color:var(--text-muted)">选择赋闲则暂不授职，可日后启用</div>`;
+    // 推荐标签
+    const recTag = s.recommendedSlotTitle
+      ? `<span class="esc-tag" style="background:rgba(201,168,76,0.2);color:#c9a84c">💡推荐：${s.recommendedSlotTitle}</span>`
+      : '';
+
+    return `<div class="exam-scholar-card" id="esc-${i}">
+      <div class="esc-avatar">${s.emoji}</div>
+      <div class="esc-info">
+        <div class="esc-name">${s.name} <span style="font-size:10px;color:${rankColor};font-weight:700">${s.rank}</span></div>
+        <div class="esc-tags">
+          <span class="esc-tag skill">专长：${s.skill}</span>
+          <span class="esc-tag ability">能力：${s.ability}</span>
+          <span class="esc-tag">年龄：${s.age}岁</span>
+          <span class="esc-tag">${s.trait}</span>
+          ${recTag}
+        </div>
+        <div class="esc-assign-row">
+          <select class="esc-slot-select" onchange="setScholarSlot(${i},this.value)">
+            <option value="">⬜ 暂不授职（赋闲）</option>
+            ${options}
+          </select>
+        </div>
+        ${slotDesc}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ===================================================
+//  新B项：人口发展系统
+// ===================================================
+
+// 各州人口自然增长（差异化）
+function _doPopulationGrowth(){
+  if(!G.prefPopulation) G.prefPopulation = {};
+  let totalGrowth = 0;
+  PREFECTURES.forEach(p=>{
+    const base = G.prefPopulation[p.id] || p.population || 20;
+    // 增长率：受民心、农业、稳定度影响，各州略有差异
+    const moraleBonus = (p.morale - 50) / 500;
+    const agriBonus = (G.stats.agri - 50) / 500;
+    const stabilityBonus = (G.stats.stability - 50) / 1000;
+    const rate = 0.008 + moraleBonus + agriBonus + stabilityBonus + (Math.random()*0.004 - 0.002);
+    const growth = Math.max(0, Math.round(base * rate));
+    G.prefPopulation[p.id] = base + growth;
+    totalGrowth += growth;
+  });
+  // 同步总人口
+  const totalPop = Object.values(G.prefPopulation).reduce((s,v)=>s+v, 0);
+  G.stats.population = totalPop;
+  if(totalGrowth > 0){
+    addHistory(`👥 各州人口自然增长，合计增加${totalGrowth}万人，总人口${totalPop}万。`, 'good');
+  }
+}
+
+// 移民实边弹窗
+function openMigrationModal(){
+  if(G.migrationDone){
+    showToast('本年已执行过移民实边，请明年再来', 'warn');
+    return;
+  }
+  const remaining = G.budget - G.budgetUsed;
+  if(remaining < 20){
+    showToast('预算不足！移民实边至少需要20万贯', 'warn');
+    return;
+  }
+
+  // 计算各州人口密度（人口/发展度）
+  const prefData = PREFECTURES.map(p=>{
+    const pop = G.prefPopulation[p.id] || p.population || 20;
+    const density = pop / Math.max(1, p.development);
+    return { ...p, pop, density };
+  }).sort((a,b)=>b.density - a.density);
+
+  const sourceOptions = prefData.slice(0,5).map(p=>
+    `<option value="${p.id}">${p.name}（人口${p.pop}万，密度${p.density.toFixed(1)}）</option>`
+  ).join('');
+  const targetOptions = prefData.slice(-5).reverse().map(p=>
+    `<option value="${p.id}">${p.name}（人口${p.pop}万，发展${p.development}）</option>`
+  ).join('');
+
+  const html = `
+    <div class="mil-modal-overlay" id="migration-modal" onclick="if(event.target===this)closeMilModal('migration-modal')">
+      <div class="mil-modal-box">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">👥</span>
+          <div>
+            <div class="mil-modal-title">移民实边</div>
+            <div class="mil-modal-sub">将人口稠密州的百姓迁往边境稀疏州，开发边疆</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('migration-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body">
+          <div class="mil-form-row">
+            <label class="mil-form-label">迁出地（人口稠密）</label>
+            <select class="mil-form-select" id="mg-source">${sourceOptions}</select>
+          </div>
+          <div class="mil-form-row">
+            <label class="mil-form-label">迁入地（边境稀疏）</label>
+            <select class="mil-form-select" id="mg-target">${targetOptions}</select>
+          </div>
+          <div class="mil-form-row">
+            <label class="mil-form-label">迁移规模</label>
+            <div class="mil-slider-wrap">
+              <input type="range" class="mil-slider" id="mg-amount" min="1" max="10" value="3"
+                oninput="document.getElementById('mg-amount-val').textContent=this.value">
+              <span class="mil-slider-val" id="mg-amount-val">3</span><span class="mil-slider-unit">万人</span>
+            </div>
+          </div>
+          <div class="mil-cost-hint">💰 每迁移1万人花费5万贯，当前可用：<b style="color:#c9a84c">${remaining}万贯</b></div>
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('migration-modal')">取消</button>
+          <button class="mil-btn-confirm" onclick="confirmMigration()">👥 执行移民</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function confirmMigration(){
+  const sourceId = document.getElementById('mg-source').value;
+  const targetId = document.getElementById('mg-target').value;
+  const amount   = parseInt(document.getElementById('mg-amount').value);
+  if(sourceId === targetId){ showToast('迁出地和迁入地不能相同', 'warn'); return; }
+  const cost = amount * 5;
+  if(G.budget - G.budgetUsed < cost){ showToast('预算不足', 'warn'); return; }
+
+  const sourcePref = PREFECTURES.find(p=>p.id===sourceId);
+  const targetPref = PREFECTURES.find(p=>p.id===targetId);
+  if(!sourcePref || !targetPref) return;
+
+  const sourcePop = G.prefPopulation[sourceId] || sourcePref.population || 20;
+  if(sourcePop <= amount + 5){ showToast('迁出地人口不足', 'warn'); return; }
+
+  G.prefPopulation[sourceId] = sourcePop - amount;
+  G.prefPopulation[targetId] = (G.prefPopulation[targetId] || targetPref.population || 20) + amount;
+  spendBudget(cost);
+  G.migrationDone = true;
+
+  // 迁入地发展度提升
+  targetPref.development = Math.min(100, targetPref.development + Math.round(amount * 0.8));
+  targetPref.morale = Math.max(0, targetPref.morale - 5); // 移民初期民心略降
+
+  const effects = { agri:+2, people:-1, stability:+1 };
+  applyEffects(effects);
+  closeMilModal('migration-modal');
+  addHistory(`👥 移民实边：从${sourcePref.name}迁移${amount}万人至${targetPref.name}，花费${cost}万贯。${targetPref.name}发展度提升。`, 'good');
+  showResult({
+    icon:'👥', title:'移民实边完成',
+    desc:`大王下令从${sourcePref.name}迁移${amount}万百姓至${targetPref.name}，开发边疆。移民初期生活艰苦，但长远来看将大大促进边境地区的农业开发与人口繁衍。`,
+    effects, type:'good'
+  }, ()=>showIdleState());
+}
+
+// ===================================================
+//  新C项：军队训练系统
+// ===================================================
+
+// 开启训练命令弹窗
+function openTrainArmyModal(){
+  const remaining = G.budget - G.budgetUsed;
+  const unitOptions = MILITARY_UNITS
+    .filter(u=>u.status!=='battle')
+    .map(u=>{
+      const isTraining = (G.trainingOrders||[]).find(o=>o.unitId===u.id);
+      const label = isTraining ? `${u.name}（训练中，剩余${isTraining.turns}年）` : `${u.name}（${u.location}，训练度${u.training}）`;
+      return `<option value="${u.id}" ${isTraining?'disabled':''}>${label}</option>`;
+    }).join('');
+
+  const html = `
+    <div class="mil-modal-overlay" id="train-army-modal" onclick="if(event.target===this)closeMilModal('train-army-modal')">
+      <div class="mil-modal-box">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">🏋️</span>
+          <div>
+            <div class="mil-modal-title">下令训练</div>
+            <div class="mil-modal-sub">消耗粮草提升军队训练度与战斗力，训练期间不可出征</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('train-army-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body">
+          <div class="mil-form-row">
+            <label class="mil-form-label">选择军队</label>
+            <select class="mil-form-select" id="ta-unit" onchange="updateTrainPreview()">${unitOptions}</select>
+          </div>
+          <div class="mil-form-row">
+            <label class="mil-form-label">训练强度</label>
+            <div class="mil-radio-group">
+              <label class="mil-radio-label"><input type="radio" name="ta-intensity" value="light" checked onchange="updateTrainPreview()"> 轻度训练（1年，粮草-10，训练度+8，战力+3）</label>
+              <label class="mil-radio-label"><input type="radio" name="ta-intensity" value="normal" onchange="updateTrainPreview()"> 正常训练（2年，粮草-20，训练度+18，战力+7）</label>
+              <label class="mil-radio-label"><input type="radio" name="ta-intensity" value="intensive" onchange="updateTrainPreview()"> 强化训练（3年，粮草-35，训练度+30，战力+12）</label>
+            </div>
+          </div>
+          <div id="ta-preview" class="mil-appoint-preview" style="margin-top:8px"></div>
+          <div class="mil-cost-hint">⚠️ 训练期间该军队无法出征作战！</div>
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('train-army-modal')">取消</button>
+          <button class="mil-btn-confirm" onclick="confirmTrainArmy()">🏋️ 开始训练</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  updateTrainPreview();
+}
+
+const TRAIN_INTENSITY_CONFIG = {
+  light:     { turns:1, grainCost:10, trainingGain:8,  combatGain:3,  moraleGain:5,  label:'轻度训练' },
+  normal:    { turns:2, grainCost:20, trainingGain:18, combatGain:7,  moraleGain:8,  label:'正常训练' },
+  intensive: { turns:3, grainCost:35, trainingGain:30, combatGain:12, moraleGain:12, label:'强化训练' },
+};
+
+function updateTrainPreview(){
+  const unitId = document.getElementById('ta-unit')?.value;
+  const intensity = document.querySelector('input[name="ta-intensity"]:checked')?.value || 'light';
+  const unit = MILITARY_UNITS.find(u=>u.id===unitId);
+  const cfg = TRAIN_INTENSITY_CONFIG[intensity];
+  const prev = document.getElementById('ta-preview');
+  if(!prev || !unit || !cfg) return;
+  const newTraining = Math.min(100, unit.training + cfg.trainingGain);
+  const newCombat   = Math.min(100, unit.combat   + cfg.combatGain);
+  prev.innerHTML = `
+    <div class="mil-appoint-preview-box">
+      <div class="mil-prev-row"><span>军队：</span><b>${unit.emoji} ${unit.name}</b></div>
+      <div class="mil-prev-row"><span>训练度：</span><b>${unit.training}</b> → <b style="color:#2ecc71">${newTraining}</b></div>
+      <div class="mil-prev-row"><span>战斗力：</span><b>${unit.combat}</b> → <b style="color:#2ecc71">${newCombat}</b></div>
+      <div class="mil-prev-row"><span>粮草消耗：</span><b style="color:#e74c3c">-${cfg.grainCost}</b>（训练期间每年扣除）</div>
+      <div class="mil-prev-row"><span>训练周期：</span><b>${cfg.turns}年</b>（完成后自动恢复待命）</div>
+    </div>`;
+}
+
+function confirmTrainArmy(){
+  const unitId    = document.getElementById('ta-unit').value;
+  const intensity = document.querySelector('input[name="ta-intensity"]:checked').value;
+  const unit = MILITARY_UNITS.find(u=>u.id===unitId);
+  const cfg  = TRAIN_INTENSITY_CONFIG[intensity];
+  if(!unit || !cfg){ showToast('请选择军队', 'warn'); return; }
+  if((G.trainingOrders||[]).find(o=>o.unitId===unitId)){
+    showToast('该军队已在训练中', 'warn'); return;
+  }
+  if(unit.grain < cfg.grainCost){
+    showToast(`粮草不足！${cfg.label}需要粮草${cfg.grainCost}，当前${unit.grain}`, 'warn'); return;
+  }
+
+  // 扣除首年粮草
+  unit.grain = Math.max(0, unit.grain - cfg.grainCost);
+  unit.status = 'training';
+  unit.statusText = `训练中(${cfg.turns}年)`;
+
+  G.trainingOrders = G.trainingOrders || [];
+  G.trainingOrders.push({
+    unitId, intensity,
+    turns: cfg.turns,
+    grainCostPerYear: cfg.grainCost,
+    trainingGain: cfg.trainingGain,
+    combatGain: cfg.combatGain,
+    moraleGain: cfg.moraleGain,
+    startTurn: G.turn,
+  });
+
+  closeMilModal('train-army-modal');
+  renderSysDetail('junshi');
+  addHistory(`🏋️ ${unit.name}开始${cfg.label}，预计${cfg.turns}年后完成，训练期间不可出征。`, 'good');
+  showResult({
+    icon:'🏋️', title:'训练命令下达',
+    desc:`${unit.name}已进入${cfg.label}状态。将士们日夜操练，${cfg.turns}年后训练度将提升${cfg.trainingGain}，战斗力提升${cfg.combatGain}。训练期间该军队无法出征。`,
+    effects:{ military:+1 }, type:'good'
+  }, ()=>showIdleState());
+}
+
+// 年度训练进度推进
+function _advanceTrainingOrders(){
+  if(!G.trainingOrders || G.trainingOrders.length===0) return;
+  const completed = [];
+  G.trainingOrders.forEach(order=>{
+    const unit = MILITARY_UNITS.find(u=>u.id===order.unitId);
+    if(!unit){ completed.push(order); return; }
+    // 扣除粮草
+    if(unit.grain >= order.grainCostPerYear){
+      unit.grain = Math.max(0, unit.grain - order.grainCostPerYear);
+    } else {
+      // 粮草不足，训练中断
+      unit.status = 'standby';
+      unit.statusText = '待命';
+      addHistory(`⚠️ ${unit.name}粮草不足，训练中断！`, 'bad');
+      completed.push(order);
+      return;
+    }
+    order.turns--;
+    if(order.turns <= 0){
+      // 训练完成
+      unit.training = Math.min(100, unit.training + order.trainingGain);
+      unit.combat   = Math.min(100, unit.combat   + order.combatGain);
+      unit.morale   = Math.min(100, unit.morale   + order.moraleGain);
+      unit.status = 'standby';
+      unit.statusText = '待命';
+      addHistory(`✅ ${unit.name}训练完成！训练度+${order.trainingGain}，战力+${order.combatGain}，士气+${order.moraleGain}。`, 'good');
+      applyEffects({ military:+3 });
+      showToast(`🏋️ ${unit.name}训练完成！战力大幅提升！`, 'info');
+      completed.push(order);
+    } else {
+      unit.statusText = `训练中(剩${order.turns}年)`;
+    }
+  });
+  G.trainingOrders = G.trainingOrders.filter(o=>!completed.includes(o));
+}
+
+// ===================================================
+//  新D项：情报细作系统
+// ===================================================
+
+// 细作任务配置
+const SPY_MISSION_TYPES = [
+  {
+    id:'troop_count', label:'刺探兵力', icon:'⚔️',
+    cost:10, risk:0.20, turns:1,
+    desc:'派细作潜入敌境，刺探其真实兵力与战斗力',
+    reveal: (n)=>({ troops: n.troops||'未知', combat: n.combat||'未知' }),
+    successText: (n,r)=>`成功刺探${n.name}兵力：约${r.troops}千人，战力约${r.combat}。`,
+  },
+  {
+    id:'internal_affairs', label:'探查内政', icon:'🏛️',
+    cost:12, risk:0.15, turns:1,
+    desc:'探查邻国内政状况、民心与稳定度',
+    reveal: (n)=>({ people: n.people||'未知', stability: n.stability||'未知' }),
+    successText: (n,r)=>`成功探查${n.name}内政：民心约${r.people}，稳定度约${r.stability}。`,
+  },
+  {
+    id:'sow_discord', label:'散布谣言', icon:'💬',
+    cost:20, risk:0.30, turns:1,
+    desc:'在敌国散布谣言，降低其民心与稳定度',
+    reveal: ()=>({}),
+    successText: (n)=>`细作在${n.name}成功散布谣言，其国内人心惶惶。`,
+    onSuccess: (n)=>{ applyEffects({prestige:+3}); const nat=NATIONS.find(x=>x.id===n.id); if(nat) nat.relation=Math.max(0,nat.relation-5); },
+  },
+  {
+    id:'steal_tech', label:'窃取技术', icon:'📜',
+    cost:25, risk:0.35, turns:2,
+    desc:'派遣细作潜伏，窃取邻国农业或军事技术',
+    reveal: ()=>({}),
+    successText: (n)=>`细作从${n.name}成功窃取技术，吴越受益匪浅。`,
+    onSuccess: ()=>{ applyEffects({agri:+4, military:+2}); },
+  },
+];
+
+// 派遣细作弹窗
+function openSpyModal(){
+  const remaining = G.budget - G.budgetUsed;
+  const activeMissions = (G.spyMissions||[]).filter(m=>m.status==='active');
+
+  const nationOptions = NATIONS.filter(n=>n.id!=='wuyue_self').map(n=>{
+    const revealed = G.intelRevealed[n.id];
+    const revealedText = revealed ? ` [已有情报]` : '';
+    return `<option value="${n.id}">${n.emoji} ${n.name}${revealedText}</option>`;
+  }).join('');
+
+  const missionOptions = SPY_MISSION_TYPES.map(m=>
+    `<option value="${m.id}">${m.icon} ${m.label}（花费${m.cost}万贯，风险${Math.round(m.risk*100)}%）</option>`
+  ).join('');
+
+  const activeMissionHtml = activeMissions.length > 0
+    ? `<div style="margin-bottom:10px;padding:8px;background:rgba(0,0,0,0.2);border-radius:4px;font-size:11px">
+        <div style="color:#c9a84c;margin-bottom:4px">📋 进行中的任务：</div>
+        ${activeMissions.map(m=>`<div>• ${m.missionLabel} → ${m.targetName}（剩余${m.turnsLeft}年）</div>`).join('')}
+      </div>` : '';
+
+  const html = `
+    <div class="mil-modal-overlay" id="spy-modal" onclick="if(event.target===this)closeMilModal('spy-modal')">
+      <div class="mil-modal-box">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">🕵️</span>
+          <div>
+            <div class="mil-modal-title">派遣细作</div>
+            <div class="mil-modal-sub">向邻国派遣细作，获取情报或实施秘密行动</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('spy-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body">
+          ${activeMissionHtml}
+          <div class="mil-form-row">
+            <label class="mil-form-label">目标国家</label>
+            <select class="mil-form-select" id="spy-nation">${nationOptions}</select>
+          </div>
+          <div class="mil-form-row">
+            <label class="mil-form-label">任务类型</label>
+            <select class="mil-form-select" id="spy-mission" onchange="updateSpyPreview()">${missionOptions}</select>
+          </div>
+          <div id="spy-preview" class="mil-appoint-preview" style="margin-top:8px"></div>
+          <div class="mil-cost-hint">💰 当前可用预算：<b style="color:#c9a84c">${remaining}万贯</b></div>
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('spy-modal')">取消</button>
+          <button class="mil-btn-confirm" onclick="confirmSendSpy()">🕵️ 派遣细作</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  updateSpyPreview();
+}
+
+function updateSpyPreview(){
+  const missionId = document.getElementById('spy-mission')?.value;
+  const cfg = SPY_MISSION_TYPES.find(m=>m.id===missionId);
+  const prev = document.getElementById('spy-preview');
+  if(!prev || !cfg) return;
+  prev.innerHTML = `
+    <div class="mil-appoint-preview-box">
+      <div class="mil-prev-row"><span>${cfg.icon} 任务：</span><b>${cfg.label}</b></div>
+      <div class="mil-prev-row"><span>说明：</span>${cfg.desc}</div>
+      <div class="mil-prev-row"><span>花费：</span><b style="color:#c9a84c">${cfg.cost}万贯</b></div>
+      <div class="mil-prev-row"><span>风险：</span><b style="color:${cfg.risk>=0.3?'#e74c3c':'#f39c12'}">${Math.round(cfg.risk*100)}%被发现</b></div>
+      <div class="mil-prev-row"><span>周期：</span><b>${cfg.turns}年后出结果</b></div>
+    </div>`;
+}
+
+function confirmSendSpy(){
+  const nationId  = document.getElementById('spy-nation').value;
+  const missionId = document.getElementById('spy-mission').value;
+  const nation = NATIONS.find(n=>n.id===nationId);
+  const cfg    = SPY_MISSION_TYPES.find(m=>m.id===missionId);
+  if(!nation || !cfg){ showToast('请选择目标和任务', 'warn'); return; }
+  if(G.budget - G.budgetUsed < cfg.cost){ showToast('预算不足', 'warn'); return; }
+
+  spendBudget(cfg.cost);
+  G.spyMissions = G.spyMissions || [];
+  G.spyMissions.push({
+    id: `spy_${Date.now()}`,
+    targetId: nationId,
+    targetName: nation.name,
+    missionId,
+    missionLabel: cfg.label,
+    risk: cfg.risk,
+    turnsLeft: cfg.turns,
+    status: 'active',
+  });
+
+  closeMilModal('spy-modal');
+  addHistory(`🕵️ 向${nation.name}派遣细作，执行「${cfg.label}」任务。`, 'neutral');
+  showResult({
+    icon:'🕵️', title:'细作已派遣',
+    desc:`细作已秘密出发，前往${nation.name}执行「${cfg.label}」任务。${cfg.turns}年后将有消息传回，请耐心等待。`,
+    effects:{}, type:'neutral'
+  }, ()=>showIdleState());
+}
+
+// 年度细作任务结算
+function _resolveSpyMissions(){
+  if(!G.spyMissions || G.spyMissions.length===0) return;
+  const toRemove = [];
+  G.spyMissions.forEach(mission=>{
+    if(mission.status !== 'active') return;
+    mission.turnsLeft--;
+    if(mission.turnsLeft > 0) return;
+
+    const cfg = SPY_MISSION_TYPES.find(m=>m.id===mission.missionId);
+    const nation = NATIONS.find(n=>n.id===mission.targetId);
+    if(!cfg || !nation){ toRemove.push(mission); return; }
+
+    // 判断是否被发现
+    const caught = Math.random() < mission.risk;
+    if(caught){
+      // 被发现：外交惩罚
+      const penalty = { diplomacy:-8, prestige:-5 };
+      applyEffects(penalty);
+      nation.relation = Math.max(0, nation.relation - 15);
+      addHistory(`⚠️ 派往${nation.name}的细作被发现！外交关系严重受损。`, 'bad');
+      showToast(`🚨 细作在${nation.name}被捕！外交危机！`, 'warn');
+      // 加入事件队列
+      G.yearEvents.push({
+        id: `spy_caught_${G.turn}`,
+        tag: 'diplomacy', tagText: '外交危机',
+        title: `细作在${nation.name}被捕`,
+        scene: `${nation.emoji}${nation.name}国王震怒，将我方细作公开处决，并遣使来质问。此事已传遍天下，吴越颜面大损。`,
+        desc: '',
+        choices: [
+          { label:'【道歉赔偿】', text:'承认错误，赔偿损失，修复关系', effect:{diplomacy:+5, treasury:-15},
+            result:{icon:'🤝',title:'道歉赔偿',desc:`吴越主动道歉并赔偿，${nation.name}勉强接受，关系有所缓和。`,type:'neutral'},
+            onConfirm:()=>{ nation.relation=Math.min(100,nation.relation+10); }
+          },
+          { label:'【矢口否认】', text:'否认派遣细作，强硬回应', effect:{diplomacy:-5, prestige:+3},
+            result:{icon:'😤',title:'强硬否认',desc:`吴越否认一切，${nation.name}虽愤怒但无可奈何，双方关系持续紧张。`,type:'bad'}
+          },
+        ],
+      });
+    } else {
+      // 成功
+      const revealed = cfg.reveal(nation);
+      if(Object.keys(revealed).length > 0){
+        G.intelRevealed[nation.id] = { ...(G.intelRevealed[nation.id]||{}), ...revealed };
+      }
+      if(cfg.onSuccess) cfg.onSuccess(nation);
+      const successMsg = cfg.successText(nation, revealed);
+      addHistory(`✅ 细作任务成功：${successMsg}`, 'good');
+      showToast(`🕵️ 细作任务成功！${cfg.label}完成`, 'info');
+      // 更新情报面板
+      const intelText = `【${nation.name}情报】${successMsg}`;
+      G.intel.unshift({ tag:'intel', tagText:'情报', text:intelText });
+      if(G.intel.length>8) G.intel.pop();
+      renderIntel();
+    }
+    mission.status = 'done';
+    toRemove.push(mission);
+  });
+  G.spyMissions = G.spyMissions.filter(m=>!toRemove.includes(m));
+}
+
+// ===================================================
+//  新E项：王位继承系统
+// ===================================================
+
+const HEIR_NAMES_GIVEN = ['元','宗','德','仁','义','文','武','明','贤','达','通','博','远','深','厚','正','清','廉','直','刚'];
+const HEIR_TRAITS = ['聪慧','仁厚','勇武','机敏','稳重','博学','刚毅','温和','果断','谨慎'];
+
+// 初始化子嗣（游戏开始时调用）
+function _initHeirs(){
+  G.heirs = [];
+  G.crownPrinceId = null;
+  G.successionCrisis = false;
+  // 钱弘俶28岁，初始有1-2个幼子
+  const initCount = 1 + Math.floor(Math.random()*2);
+  for(let i=0;i<initCount;i++){
+    const heir = _generateHeir(Math.floor(Math.random()*5)+1);
+    G.heirs.push(heir);
+  }
+  if(G.heirs.length > 0){
+    G.crownPrinceId = G.heirs[0].id;
+    G.heirs[0].isCrownPrince = true;
+  }
+}
+
+function _generateHeir(age){
+  const given = HEIR_NAMES_GIVEN[Math.floor(Math.random()*HEIR_NAMES_GIVEN.length)];
+  const trait = HEIR_TRAITS[Math.floor(Math.random()*HEIR_TRAITS.length)];
+  return {
+    id: `heir_${Date.now()}_${Math.random().toString(36).slice(2,5)}`,
+    name: `钱${given}`,
+    age,
+    ability: 40 + Math.floor(Math.random()*40),
+    loyalty: 80 + Math.floor(Math.random()*20),
+    trait,
+    isCrownPrince: false,
+    education: 0,  // 培养投入（0-100）
+    bio: `钱弘俶之子，年${age}岁，性格${trait}。`,
+  };
+}
+
+// 子嗣年度成长
+function _doHeirGrowth(){
+  if(!G.heirs) G.heirs = [];
+
+  // 所有子嗣年龄+1
+  G.heirs.forEach(h=>{
+    h.age++;
+    // 能力随年龄和培养度缓慢成长
+    const growthChance = 0.3 + h.education/200;
+    if(Math.random() < growthChance){
+      h.ability = Math.min(95, h.ability + 1 + Math.floor(h.education/30));
+    }
+  });
+
+  // 国王年龄（G.turn + 28）
+  const kingAge = 28 + G.turn;
+
+  // 每5年有30%概率新增子嗣（国王<50岁时）
+  if(kingAge < 50 && G.turn % 5 === 0 && Math.random() < 0.3){
+    const newHeir = _generateHeir(0);
+    G.heirs.push(newHeir);
+    addHistory(`🎉 王室喜讯：${newHeir.name}降生，钱弘俶又添一子！`, 'good');
+    applyEffects({ stability:+2, people:+1 });
+  }
+
+  // 检查储位之争
+  if(G.heirs.length === 0){
+    // 无子嗣：触发储位危机
+    if(!G.successionCrisis){
+      G.successionCrisis = true;
+      applyEffects({ stability:-8, people:-5 });
+      addHistory('⚠️ 大王膝下无子，朝野议论纷纷，储位之争隐患渐显！', 'bad');
+      G.yearEvents.push({
+        id: `succession_crisis_${G.turn}`,
+        tag: 'crisis', tagText: '储位危机',
+        title: '储位悬空，朝野不安',
+        scene: '大王膝下尚无子嗣，朝中重臣忧心忡忡，各方势力蠢蠢欲动，储位之争的阴云笼罩朝堂。',
+        desc: '',
+        choices: [
+          { label:'【广纳后宫】', text:'广纳妃嫔，以求早日诞下子嗣', effect:{people:-3, stability:+2},
+            result:{icon:'🏯',title:'广纳后宫',desc:'大王广纳后宫，朝野期待王室早日诞下子嗣。',type:'neutral'}
+          },
+          { label:'【过继宗室】', text:'从钱氏宗室中选一子过继，立为储君', effect:{stability:+5, prestige:+3},
+            result:{icon:'👑',title:'过继储君',desc:'大王从宗室中选定继承人，储位之争暂时平息。',type:'good'},
+            onConfirm:()=>{
+              const adopted = _generateHeir(8 + Math.floor(Math.random()*5));
+              adopted.name = '钱' + HEIR_NAMES_GIVEN[Math.floor(Math.random()*HEIR_NAMES_GIVEN.length)];
+              adopted.bio = '钱氏宗室子弟，过继为王储。';
+              G.heirs.push(adopted);
+              G.crownPrinceId = adopted.id;
+              adopted.isCrownPrince = true;
+              G.successionCrisis = false;
+              addHistory(`👑 大王过继${adopted.name}为储君，储位之争平息。`, 'good');
+            }
+          },
+        ],
+      });
+    }
+  } else {
+    G.successionCrisis = false;
+    // 确保太子设置正确
+    if(!G.crownPrinceId || !G.heirs.find(h=>h.id===G.crownPrinceId)){
+      // 选年龄最大且成年的子嗣为太子
+      const adult = G.heirs.filter(h=>h.age>=10).sort((a,b)=>b.age-a.age)[0];
+      if(adult){
+        G.heirs.forEach(h=>h.isCrownPrince=false);
+        adult.isCrownPrince = true;
+        G.crownPrinceId = adult.id;
+      }
+    }
+  }
+}
+
+// 子嗣管理弹窗
+function openHeirModal(){
+  if(!G.heirs || G.heirs.length===0){
+    showToast('大王目前尚无子嗣', 'info');
+    return;
+  }
+
+  const heirCards = G.heirs.map(h=>{
+    const abilityColor = h.ability>=70?'#2ecc71':h.ability>=50?'#f39c12':'#e74c3c';
+    const crownTag = h.isCrownPrince ? '<span style="color:#c9a84c;font-weight:700">👑 太子</span>' : '';
+    const eduBar = `<div class="syd-bar-wrap" style="width:80px"><div class="syd-bar" style="width:${h.education}%;background:#6b3fa0"></div><span class="syd-bar-val">${h.education}</span></div>`;
+    return `<div style="background:rgba(0,0,0,0.2);border-radius:6px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-weight:600">${h.name} ${crownTag}</span>
+        <span style="font-size:11px;color:var(--text-muted)">${h.age}岁 · ${h.trait}</span>
+      </div>
+      <div style="display:flex;gap:12px;font-size:11px;margin-bottom:6px">
+        <span>能力：<b style="color:${abilityColor}">${h.ability}</b></span>
+        <span>忠诚：<b>${h.loyalty}</b></span>
+        <span>培养度：${eduBar}</span>
+      </div>
+      <div style="display:flex;gap:6px">
+        ${!h.isCrownPrince ? `<button class="mil-alloc-btn" onclick="setCrownPrince('${h.id}')">立为太子</button>` : ''}
+        <button class="mil-alloc-btn" onclick="educateHeir('${h.id}')">培养（10万贯）</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  const crisisHtml = G.successionCrisis
+    ? `<div style="background:rgba(231,76,60,0.15);border:1px solid rgba(231,76,60,0.4);border-radius:4px;padding:8px;margin-bottom:10px;font-size:11px;color:#e74c3c">⚠️ 储位危机：大王尚无成年子嗣，朝野不安！</div>`
+    : '';
+
+  const html = `
+    <div class="mil-modal-overlay" id="heir-modal" onclick="if(event.target===this)closeMilModal('heir-modal')">
+      <div class="mil-modal-box">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">👑</span>
+          <div>
+            <div class="mil-modal-title">王室子嗣</div>
+            <div class="mil-modal-sub">管理子嗣培养与太子册立</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('heir-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body">
+          ${crisisHtml}
+          ${heirCards}
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('heir-modal')">关闭</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function setCrownPrince(heirId){
+  const heir = G.heirs.find(h=>h.id===heirId);
+  if(!heir) return;
+  G.heirs.forEach(h=>h.isCrownPrince=false);
+  heir.isCrownPrince = true;
+  G.crownPrinceId = heirId;
+  closeMilModal('heir-modal');
+  applyEffects({ stability:+3, prestige:+2 });
+  addHistory(`👑 大王册立${heir.name}为太子，储位已定，朝野安心。`, 'good');
+  showToast(`👑 ${heir.name}已被册立为太子`, 'info');
+  openHeirModal();
+}
+
+function educateHeir(heirId){
+  const heir = G.heirs.find(h=>h.id===heirId);
+  if(!heir) return;
+  const cost = 10;
+  if(G.budget - G.budgetUsed < cost){ showToast('预算不足', 'warn'); return; }
+  spendBudget(cost);
+  heir.education = Math.min(100, heir.education + 15);
+  heir.ability   = Math.min(95, heir.ability + 2);
+  closeMilModal('heir-modal');
+  addHistory(`📚 大王投入${cost}万贯培养${heir.name}，其学识与能力有所提升。`, 'good');
+  showToast(`📚 ${heir.name}培养度+15，能力+2`, 'info');
+  openHeirModal();
 }
 
 // ===================================================
