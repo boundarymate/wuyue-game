@@ -4101,6 +4101,9 @@ const WAR_ENEMY_CONFIG = {
     commanders:['林仁肇','皇甫晖','边镐'],
     territory:['金陵','润州','常州'],
     warDesc:'南唐国力强盛，林仁肇等名将骁勇善战，此战凶险万分！',
+    // 地理限制：只有西境/主力部队能出征南唐（湖州边境、杭州主力）
+    allowedUnits: ['bianjing','zhenhai'],
+    allowedDesc: '南唐在西境，只有边境守备军和镇海军可出征',
     peacePrice:{ treasury:-30, diplomacy:+15, prestige:-10 },
     victoryReward:{ prestige:+25, military:+15, treasury:+20, territory:'润州' },
     defeatPenalty:{ military:-20, people:-15, treasury:-25, prestige:-20 }
@@ -4112,6 +4115,9 @@ const WAR_ENEMY_CONFIG = {
     commanders:['留从效','陈洪进'],
     territory:['福州','泉州'],
     warDesc:'闽国已分裂，残余势力战力有限，是扩张的好时机。',
+    // 地理限制：闽国在东南，镇东军和水师可出征
+    allowedUnits: ['zhendong','shuishi'],
+    allowedDesc: '闽国在东南，只有镇东军和水师可出征',
     peacePrice:{ treasury:-10, diplomacy:+10 },
     victoryReward:{ prestige:+15, military:+8, treasury:+12, territory:'温州' },
     defeatPenalty:{ military:-10, people:-8, treasury:-12, prestige:-10 }
@@ -4123,6 +4129,9 @@ const WAR_ENEMY_CONFIG = {
     commanders:['海寇首领'],
     territory:['海寇巢穴'],
     warDesc:'海寇盘踞东海，骚扰沿海，出兵剿灭可保海上贸易畅通。',
+    // 地理限制：海战只有水师能出征
+    allowedUnits: ['shuishi'],
+    allowedDesc: '海寇在东海，只有水师可出征',
     peacePrice:{ treasury:-8 },
     victoryReward:{ prestige:+10, commerce:+12, treasury:+8, territory:null },
     defeatPenalty:{ military:-8, commerce:-10, prestige:-8 }
@@ -4140,6 +4149,8 @@ const WAR_ACTIONS = [
     enemyBonus:{ hit:0.25, miss:0.15 },
     moraleGain:8, moraleRisk:12,
     supplyUse:10,
+    // 兵种加成：步兵多则正面强攻更强
+    troopBonus: { infantry: 0.08 },
     flavorWin:['我军将士奋勇冲锋，敌阵被撕开一道口子！','正面突破成功，敌军阵脚大乱！'],
     flavorLoss:['正面强攻受阻，我军伤亡惨重。','敌军防线坚固，强攻未能奏效。']
   },
@@ -4152,7 +4163,10 @@ const WAR_ACTIONS = [
     enemyBonus:{ hit:0.20, miss:0.20 },
     moraleGain:10, moraleRisk:8,
     supplyUse:12,
+    // 兵种加成：骑兵多则迂回更强；水师出征时变为"水上迂回"
+    troopBonus: { cavalry: 0.10, navy: 0.08 },
     flavorWin:['骑兵绕道侧翼，敌军措手不及！','迂回成功，敌军腹背受敌，阵型崩溃！'],
+    flavorWinNavy:['水师绕道敌后，从水路突袭，敌军大乱！','舰队迂回包抄，敌军腹背受敌！'],
     flavorLoss:['迂回路线被敌军识破，侧翼攻势受挫。','地形不利，迂回部队陷入困境。']
   },
   {
@@ -4164,6 +4178,8 @@ const WAR_ACTIONS = [
     enemyBonus:{ hit:0.15, miss:0.30 },
     moraleGain:5, moraleRisk:3,
     supplyUse:5,
+    // 兵种加成：步兵多则防守更强
+    troopBonus: { infantry: 0.06 },
     flavorWin:['我军坚守阵地，敌军强攻无功而返，士气大挫！','以逸待劳，敌军消耗巨大。'],
     flavorLoss:['防线被突破，我军被迫后撤。','坚守策略未能奏效，敌军压力持续增大。']
   },
@@ -4176,6 +4192,8 @@ const WAR_ACTIONS = [
     enemyBonus:{ hit:0.10, miss:0.10 },
     moraleGain:15, moraleRisk:18,
     supplyUse:8,
+    // 兵种加成：弓弩手多则奇袭更强
+    troopBonus: { archers: 0.07 },
     flavorWin:['夜袭大成功！敌营火光冲天，敌军溃不成军！','奇袭得手，敌将被斩，敌军大乱！'],
     flavorLoss:['奇袭被敌军识破，反遭伏击，损失惨重！','夜袭失败，我军在黑暗中陷入混乱。']
   },
@@ -4189,6 +4207,8 @@ const WAR_ACTIONS = [
     moraleGain:6, moraleRisk:5,
     supplyUse:6,
     enemySupplyDmg: 20,
+    // 兵种加成：骑兵截粮更有效；水师可封锁海上补给线
+    troopBonus: { cavalry: 0.08, navy: 0.06 },
     flavorWin:['粮道截断成功！敌军粮草告急，士气动摇。','轻骑奔袭，敌军辎重被焚，补给中断！'],
     flavorLoss:['截粮行动被敌军骑兵击退。','敌军护粮严密，截粮未能成功。']
   }
@@ -4285,14 +4305,20 @@ function _goToWarStep2(){
 function _renderDeclareWarStep2(){
   const cfg = WAR_ENEMY_CONFIG[_selectedWarTarget];
   const nation = NATIONS.find(n=>n.id===_selectedWarTarget);
+  const allowed = cfg.allowedUnits || MILITARY_UNITS.map(u=>u.id);
 
   const unitRows = MILITARY_UNITS.map(u=>{
     const commander = MILITARY_OFFICIALS.find(o=>o.id===u.commander);
     const cmdName = commander ? commander.name : '—';
-    return `<div class="war-unit-row" id="war-unit-row-${u.id}" onclick="toggleWarUnit('${u.id}',this)">
-      <div class="war-unit-check" id="war-unit-check-${u.id}">☐</div>
+    const isAllowed = allowed.includes(u.id);
+    const disabledAttr = isAllowed ? '' : 'data-disabled="true"';
+    const disabledStyle = isAllowed ? '' : 'opacity:0.45;cursor:not-allowed;';
+    const disabledTag = isAllowed ? '' : `<span style="font-size:9px;color:#e74c3c;margin-left:6px">⛔ 地理不符</span>`;
+    const clickHandler = isAllowed ? `onclick="toggleWarUnit('${u.id}',this)"` : '';
+    return `<div class="war-unit-row" id="war-unit-row-${u.id}" ${clickHandler} ${disabledAttr} style="${disabledStyle}">
+      <div class="war-unit-check" id="war-unit-check-${u.id}">${isAllowed ? '☐' : '✕'}</div>
       <div class="war-unit-info">
-        <div class="war-unit-name">${u.emoji} ${u.name}
+        <div class="war-unit-name">${u.emoji} ${u.name}${disabledTag}
           <span style="font-size:9px;color:var(--text-muted);margin-left:4px">驻${u.location} · ${u.type}</span>
         </div>
         <div class="war-unit-stats">
@@ -4308,8 +4334,11 @@ function _renderDeclareWarStep2(){
 
   document.querySelector('.war-modal-title').textContent = `⚔️ 出征${cfg.name} · 第二步：调兵遣将`;
   document.getElementById('war-declare-body').innerHTML = `
-    <div style="font-size:11px;color:var(--text-muted);margin-bottom:8px;padding:0 2px">
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px;padding:0 2px">
       选择调动哪些部队出征（至少选一支）。未选中的部队留守本地。
+    </div>
+    <div style="font-size:10px;color:#f39c12;margin-bottom:8px;padding:4px 8px;background:rgba(243,156,18,0.08);border-radius:5px">
+      📍 ${cfg.allowedDesc || '所有部队均可出征'}
     </div>
     <div id="war-unit-list">${unitRows}</div>
     <div id="war-force-summary" style="margin-top:10px;padding:8px 10px;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.25);border-radius:6px;font-size:11px">
@@ -4421,6 +4450,13 @@ function startWar(targetId, selectedUnitIds){
   const commander  = commanders.sort((a,b)=>b.ability-a.ability)[0]
     || [...MILITARY_OFFICIALS].sort((a,b)=>b.ability-a.ability)[0];
 
+  // ── A项：出征抽兵 —— 从各部队扣减兵力 ──
+  selectedUnits.forEach(u=>{ u._troopsBeforeWar = u.troops; u._moraleBeforeWar = u.morale; u.troops = 0; });
+
+  // 统计出征部队兵种构成（用于B项兵种加成）
+  const troopTypeMap = {};
+  selectedUnits.forEach(u=>{ troopTypeMap[u.type] = (troopTypeMap[u.type]||0) + (u._troopsBeforeWar||u.troops); });
+
   G.war = {
     targetId,
     targetName: cfg.name,
@@ -4428,6 +4464,8 @@ function startWar(targetId, selectedUnitIds){
     round: 1,
     maxRounds: 10,
     phase: 'battle',   // battle | peace_offer | ended
+    deployedUnitIds: unitIds,   // A项：记录出征部队ID，战后归还
+    troopTypeMap,               // B项：兵种构成
     myForce: {
       name: '吴越军',
       troops: totalTroops,
@@ -4571,6 +4609,15 @@ function renderBattleModal(){
       </div>
     </div>
 
+    <div style="margin:6px 0;padding:5px 10px;background:rgba(243,156,18,0.1);border:1px solid rgba(243,156,18,0.3);border-radius:6px;font-size:11px;display:flex;align-items:center;gap:8px">
+      <span>🌾 全国粮草：</span>
+      <div style="flex:1;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden">
+        <div style="height:100%;width:${Math.min(100,G.stats.grain)}%;background:${G.stats.grain>30?'#f39c12':G.stats.grain>10?'#e67e22':'#e74c3c'};border-radius:3px;transition:width 0.3s"></div>
+      </div>
+      <span style="color:${G.stats.grain>30?'#f39c12':G.stats.grain>10?'#e67e22':'#e74c3c'};font-weight:bold">${G.stats.grain}万石</span>
+      <span style="color:var(--text-muted);font-size:10px">每回合约耗${Math.max(1,Math.round(w.myForce.troops*0.5))}万石</span>
+    </div>
+
     <div class="war-actions-title">选择本回合战术：</div>
     <div class="war-actions-grid">${actionBtns}</div>
 
@@ -4600,9 +4647,20 @@ function executeBattleAction(actionId){
   // ── 指挥官加成 ──
   const cmdBonus = (my.commanderAbility - 60) / 200; // -0.15 ~ +0.2
 
+  // ── B项：兵种加成 ──
+  // troopBonus 格式：{ 步兵: 0.1, 水军: 0.15 } 表示该行动对对应兵种有命中加成
+  let troopBonus = 0;
+  if(act.troopBonus && w.troopTypeMap){
+    const totalTroops = Object.values(w.troopTypeMap).reduce((s,v)=>s+v,0)||1;
+    Object.entries(act.troopBonus).forEach(([type, bonus])=>{
+      const ratio = (w.troopTypeMap[type]||0) / totalTroops;
+      troopBonus += bonus * ratio;
+    });
+  }
+
   // ── 我方攻击 ──
   const myAttackRoll = Math.random();
-  const myHitChance = act.myBonus.hit + cmdBonus + (my.combat/200) + (my.morale/300) - (en.defense||0)/400;
+  const myHitChance = act.myBonus.hit + cmdBonus + troopBonus + (my.combat/200) + (my.morale/300) - (en.defense||0)/400;
   const myHit = myAttackRoll < myHitChance;
 
   // ── 敌方反击 ──
@@ -4648,6 +4706,15 @@ function executeBattleAction(actionId){
   // 物资消耗
   my.supply = Math.max(0, my.supply - act.supplyUse);
   en.supply = Math.max(0, en.supply - Math.floor(Math.random()*6+3));
+
+  // ── D项：每回合消耗全国粮草 ──
+  const grainCost = Math.max(1, Math.round(my.troops * 0.5)); // 每千兵每回合耗0.5万石
+  G.stats.grain = Math.max(0, G.stats.grain - grainCost);
+  if(G.stats.grain <= 0){
+    logText += ` ⚠️ 粮草耗尽！军心大乱！`;
+    my.morale = Math.max(5, my.morale - 20);
+    my.supply = 0;
+  }
 
   // 应用变化
   my.troops = Math.max(0, my.troops - myLoss);
@@ -4714,6 +4781,11 @@ function checkWarEnd(){
     endWar('victory_supply');
     return true;
   }
+  // D项：我方粮草耗尽，士气崩溃
+  if(G.stats.grain<=0 && my.morale<=15){
+    endWar('defeat_supply');
+    return true;
+  }
   return false;
 }
 
@@ -4726,7 +4798,36 @@ function endWar(result){
 
   let icon, title, desc, effects, type;
 
-  if(result==='victory_total'||result==='victory_points'||result==='victory_supply'){
+  // ── A项：战后归还兵力 ──
+  const deployedIds = w.deployedUnitIds || [];
+  const isVictory = result==='victory_total'||result==='victory_points'||result==='victory_supply';
+  const isDefeat  = result==='defeat_total'||result==='defeat_points'||result==='defeat_supply';
+  deployedIds.forEach(uid=>{
+    const unit = MILITARY_UNITS.find(u=>u.id===uid);
+    if(!unit) return;
+    const origTroops = unit._troopsBeforeWar || 0;
+    if(isVictory){
+      // 胜利：按战场剩余比例归还，最少保留原兵力20%
+      const ratio = Math.max(0.2, w.myForce.troops / Math.max(1, deployedIds.reduce((s,id)=>{
+        const u2=MILITARY_UNITS.find(x=>x.id===id); return s+(u2?u2._troopsBeforeWar||0:0);
+      },0)));
+      unit.troops = Math.max(1, Math.round(origTroops * ratio));
+      unit.morale = Math.min(100, (unit._moraleBeforeWar||unit.morale) + 10);
+    } else if(isDefeat){
+      // 败退：损失惨重，归还原兵力30%~60%
+      const lossRatio = result==='defeat_supply' ? 0.5 : 0.35;
+      unit.troops = Math.max(1, Math.round(origTroops * lossRatio));
+      unit.morale = Math.max(15, (unit._moraleBeforeWar||unit.morale) - 20);
+    } else {
+      // 平局：归还原兵力70%
+      unit.troops = Math.max(1, Math.round(origTroops * 0.7));
+      unit.morale = Math.max(20, (unit._moraleBeforeWar||unit.morale) - 5);
+    }
+    delete unit._troopsBeforeWar;
+    delete unit._moraleBeforeWar;
+  });
+
+  if(isVictory){
     icon = result==='victory_total'?'🏆':'⚔️';
     title = result==='victory_total'?'大获全胜！':result==='victory_supply'?'断粮制胜！':'积分胜利';
     const reward = cfg.victoryReward;
@@ -4735,29 +4836,24 @@ function endWar(result){
     desc = `吴越军队取得胜利！${w.myForce.commanderName}率军凯旋，${cfg.name}被迫求和。`;
     if(reward.territory){
       desc += `\n\n战后割让：${reward.territory}并入吴越版图！`;
-      // 更新PREFECTURES（如果有对应州）
       const pref = PREFECTURES.find(p=>p.name===reward.territory);
       if(pref){ pref.threat='none'; }
     }
     type = 'good';
-    // 更新NATIONS关系
     const nation = NATIONS.find(n=>n.id===w.targetId);
     if(nation){ nation.relation = Math.max(0, nation.relation-20); nation.threat='low'; }
-    // 更新MILITARY_UNITS
-    const mainUnit = MILITARY_UNITS.find(u=>u.commander===w.myForce.commanderId)||MILITARY_UNITS[0];
-    if(mainUnit){ mainUnit.troops=Math.max(2,w.myForce.troops); mainUnit.morale=Math.min(100,w.myForce.morale+10); }
 
-  } else if(result==='defeat_total'||result==='defeat_points'){
-    icon = '💀';
-    title = result==='defeat_total'?'惨败而归':'战败求和';
+  } else if(isDefeat){
+    icon = result==='defeat_supply'?'🌾':'💀';
+    title = result==='defeat_supply'?'粮草耗尽，败退而归':result==='defeat_total'?'惨败而归':'战败求和';
     const penalty = cfg.defeatPenalty;
     effects = { ...penalty };
-    desc = `吴越军队战败！${w.myForce.commanderName}率残部撤退，${cfg.name}乘胜追击，吴越被迫割地赔款。`;
+    desc = result==='defeat_supply'
+      ? `粮草耗尽，军心崩溃！${w.myForce.commanderName}率残部仓皇撤退，${cfg.name}乘胜追击。`
+      : `吴越军队战败！${w.myForce.commanderName}率残部撤退，${cfg.name}乘胜追击，吴越被迫割地赔款。`;
     type = 'bad';
     const nation = NATIONS.find(n=>n.id===w.targetId);
     if(nation){ nation.relation=Math.min(100,nation.relation+10); nation.threat='high'; }
-    const mainUnit = MILITARY_UNITS.find(u=>u.commander===w.myForce.commanderId)||MILITARY_UNITS[0];
-    if(mainUnit){ mainUnit.troops=Math.max(1,w.myForce.troops); mainUnit.morale=Math.max(20,w.myForce.morale-15); }
 
   } else { // stalemate
     icon = '🤝';
