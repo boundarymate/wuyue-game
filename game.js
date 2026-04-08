@@ -60,6 +60,16 @@ const G = {
   //   enemyForce:{troops,morale,supply,combat},
   //   battleLog:[], warScore, territory:[] }
   warHistory: [],            // 历史战争记录
+  // ── A项：税率系统 ──
+  taxRate: 'normal',         // 'low'轻徭薄赋 / 'normal'正常 / 'high'重税 / 'harsh'苛政
+  // ── B项：官职空缺 ──
+  vacantOffices: [],         // 空缺官职列表 [{id,role,group,since}]
+  // ── D项：使者队列 ──
+  envoyQueue: [],            // 待处理使者事件 [{nation,type,turn}]
+  // ── E项：灾害 ──
+  activeDisaster: null,      // 当前活跃灾害 {type,severity,turn,prefId}
+  // ── F项：商路 ──
+  tradeRoutes: [],           // 已开辟商路 [{id,name,partner,income,turnsActive,blocked}]
 };
 
 // ===================================================
@@ -1260,24 +1270,33 @@ function updateBudgetDisplay(){
 // ===================================================
 //  税收计算系统
 // ===================================================
+// A项：税率配置
+const TAX_RATE_CONFIG = {
+  low:    { label:'轻徭薄赋', mult:0.70, peopleDelta:+6,  stabilityDelta:+3,  desc:'税率极低，民心大振，但国库收入减少30%' },
+  normal: { label:'正常税率', mult:1.00, peopleDelta:0,   stabilityDelta:0,   desc:'维持正常税率，收支平衡' },
+  high:   { label:'加征赋税', mult:1.35, peopleDelta:-8,  stabilityDelta:-5,  desc:'税率偏高，国库充盈，但民心下滑' },
+  harsh:  { label:'苛政重税', mult:1.70, peopleDelta:-18, stabilityDelta:-12, desc:'苛政猛于虎，税收暴增，但民心崩溃，随时可能民变' },
+};
+
 function calcAnnualTax(){
-  // 各州税收 = 基础税 × 人口系数 × 发展度系数 × (1 - 贪腐率)
-  // 人口系数：以20万人为基准，超出/不足按比例调整
-  // 发展度系数：development/100 * 1.5（最高1.5倍）
+  // 各州税收 = 基础税 × 人口系数 × 发展度系数 × (1 - 贪腐率) × 税率乘数
+  const rateCfg = TAX_RATE_CONFIG[G.taxRate] || TAX_RATE_CONFIG.normal;
   let totalTax = 0;
   const details = [];
   PREFECTURES.forEach(p=>{
     const popFactor = Math.max(0.5, p.population / 20);
     const devFactor = 0.5 + (p.development||60) / 100;
     const corrFactor = 1 - G.corruption;
-    const tax = Math.round(p.tax * popFactor * devFactor * corrFactor);
+    const tax = Math.round(p.tax * popFactor * devFactor * corrFactor * rateCfg.mult);
     totalTax += tax;
     details.push({ name: p.name, tax });
   });
-  // 商业加成：commerce指数每10点额外+5万贯
-  const commerceBonus = Math.round((G.stats.commerce - 50) / 10 * 5);
-  totalTax = Math.max(10, totalTax + commerceBonus);
-  return { total: totalTax, details, commerceBonus };
+  // 商业加成：commerce指数每10点额外+5万贯（含税率乘数）
+  const commerceBonus = Math.round((G.stats.commerce - 50) / 10 * 5 * rateCfg.mult);
+  // F项：商路收入
+  const tradeIncome = (G.tradeRoutes||[]).filter(r=>!r.blocked).reduce((s,r)=>s+r.income,0);
+  totalTax = Math.max(10, totalTax + commerceBonus + tradeIncome);
+  return { total: totalTax, details, commerceBonus, tradeIncome, rateCfg };
 }
 
 function getTaxReport(){
@@ -1768,14 +1787,50 @@ function renderZhengwuDetail(){
     `<div class="syd-warn-item">📍 <b>${p.name}</b> 刺史空缺</div>`
   ).join('') || '<div class="syd-warn-none">各州刺史均已到任</div>';
 
+  // A项：税率面板
+  const rateCfg = TAX_RATE_CONFIG[G.taxRate] || TAX_RATE_CONFIG.normal;
+  const taxRateBtns = Object.entries(TAX_RATE_CONFIG).map(([key,cfg])=>{
+    const active = G.taxRate===key;
+    const color = key==='low'?'#2ecc71':key==='normal'?'#c9a84c':key==='high'?'#e67e22':'#e74c3c';
+    return `<button onclick="setTaxRate('${key}')" style="flex:1;padding:5px 2px;font-size:10px;border-radius:5px;border:1px solid ${active?color:'rgba(255,255,255,0.15)'};background:${active?`${color}22`:'transparent'};color:${active?color:'var(--text-muted)'};cursor:pointer;transition:all 0.2s">${cfg.label}</button>`;
+  }).join('');
+  const taxPreview = calcAnnualTax();
+
+  // B项：官职空缺列表
+  const vacantList = (G.vacantOffices||[]).length > 0
+    ? (G.vacantOffices||[]).map(v=>`<div class="syd-warn-item">⚠ <b>${v.role}</b> 空缺${G.turn-v.since}年，${Object.entries(OFFICE_VACANCY_PENALTY[v.group]||{}).map(([k,val])=>`${getStatName(k)}${val}/年`).join('、')}</div>`).join('')
+    : '<div class="syd-warn-none">暂无官职空缺</div>';
+
+  // F项：商路状态
+  const routeList = (G.tradeRoutes||[]).length > 0
+    ? (G.tradeRoutes||[]).map(r=>`<div class="syd-warn-item" style="color:${r.blocked?'#e74c3c':'#2ecc71'}">${r.blocked?'🚫':'🚢'} <b>${r.name}</b>（${r.partner}）+${r.income}万贯/年 ${r.blocked?'[战争中断]':''}</div>`).join('')
+    : '<div class="syd-warn-none">尚未开辟商路</div>';
+
   return `<div class="syd-section">
     <div class="syd-section-title">📋 政务概况</div>
     <div class="syd-summary-row">
       <div class="syd-summary-item"><div class="syd-summary-val">${filled}</div><div class="syd-summary-key">在职官员</div></div>
-      <div class="syd-summary-item"><div class="syd-summary-val" style="color:#e74c3c">${vacancies}</div><div class="syd-summary-key">官职空缺</div></div>
+      <div class="syd-summary-item"><div class="syd-summary-val" style="color:${(G.vacantOffices||[]).length>0?'#e74c3c':'#2ecc71'}">${(G.vacantOffices||[]).length}</div><div class="syd-summary-key">官职空缺</div></div>
       <div class="syd-summary-item"><div class="syd-summary-val">${G.stats.stability}</div><div class="syd-summary-key">政局稳定</div></div>
       <div class="syd-summary-item"><div class="syd-summary-val">${G.stats.culture}</div><div class="syd-summary-key">文治</div></div>
     </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">📊 税率调整 <span style="font-size:10px;color:var(--text-muted)">当前：${rateCfg.label} · 预计税收${taxPreview.total}万贯</span></div>
+      <div style="display:flex;gap:4px;margin:6px 0">${taxRateBtns}</div>
+      <div style="font-size:10px;color:${G.taxRate==='low'||G.taxRate==='normal'?'#2ecc71':'#e74c3c'};padding:2px 0">${rateCfg.desc}</div>
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">🚢 商路 <button onclick="openTradeRouteModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:4px;color:#c9a84c;cursor:pointer">+ 开辟</button></div>
+      ${routeList}
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">⚠️ 官职空缺</div>
+      ${vacantList}
+    </div>
+
     <div class="syd-warn-section">
       <div class="syd-warn-title">🔴 忠诚预警</div>
       ${lowLoyalty}
@@ -2761,7 +2816,54 @@ function _doEndYear(){
   const grainNet = grainProduce - grainConsume;
   const grainDesc = grainNet>=0 ? `粮食净增${grainNet}万石` : `粮食净减${Math.abs(grainNet)}万石`;
   const corrPct = Math.round(G.corruption*100);
-  addHistory(`第${yearStr(G.turn)}年结束。税收${newTax}万贯，结余${surplus}万贯入库，贪腐率${corrPct}%。人口增加${popGrowth}万，${grainDesc}。`,'neutral');
+  // ── A项：税率对民心/稳定的年度影响 ──
+  const rateCfg = TAX_RATE_CONFIG[G.taxRate] || TAX_RATE_CONFIG.normal;
+  if(rateCfg.peopleDelta !== 0){
+    applyEffects({ people: rateCfg.peopleDelta, stability: rateCfg.stabilityDelta });
+  }
+  // 苛政重税：民心<30时有50%概率触发民变事件
+  if(G.taxRate === 'harsh' && G.stats.people < 30 && Math.random() < 0.5){
+    _triggerRebellionEvent();
+  }
+  // 高税率：民心<40时有25%概率触发民变
+  if(G.taxRate === 'high' && G.stats.people < 40 && Math.random() < 0.25){
+    _triggerRebellionEvent();
+  }
+
+  // ── B项：官职空缺惩罚（每个空缺每年扣对应指标）──
+  (G.vacantOffices||[]).forEach(v=>{
+    const penalty = OFFICE_VACANCY_PENALTY[v.group] || {};
+    applyEffects(penalty);
+    addHistory(`⚠️ ${v.role}一职空缺已${G.turn - v.since}年，${Object.entries(penalty).map(([k,val])=>`${getStatName(k)}${val}`).join('、')}。`, 'bad');
+  });
+
+  // ── F项：商路收入日志 ──
+  const activeRoutes = (G.tradeRoutes||[]).filter(r=>!r.blocked);
+  if(activeRoutes.length > 0){
+    const tradeTotal = activeRoutes.reduce((s,r)=>s+r.income,0);
+    addHistory(`🚢 商路收入：${activeRoutes.map(r=>r.name).join('、')}，合计${tradeTotal}万贯已计入税收。`, 'good');
+    // 商路每年增加commerce
+    applyEffects({ commerce: activeRoutes.length });
+    // 商路活跃年数+1
+    activeRoutes.forEach(r=>r.turnsActive = (r.turnsActive||0)+1);
+  }
+  // 战争期间商路中断
+  if(G.war){
+    (G.tradeRoutes||[]).forEach(r=>{
+      if(!r.blocked){ r.blocked = true; addHistory(`⚔️ 战争期间，${r.name}商路中断！`, 'bad'); }
+    });
+  } else {
+    // 和平时期恢复商路
+    (G.tradeRoutes||[]).filter(r=>r.blocked).forEach(r=>{
+      r.blocked = false;
+      addHistory(`✅ ${r.name}商路已恢复通畅。`, 'good');
+    });
+  }
+
+  const taxRateLabel = rateCfg.label;
+  const tradeIncome = taxReport.tradeIncome || 0;
+  const tradeDesc = tradeIncome > 0 ? `，商路收入${tradeIncome}万贯` : '';
+  addHistory(`第${yearStr(G.turn)}年结束。税收${newTax}万贯（${taxRateLabel}${tradeDesc}），结余${surplus}万贯入库，贪腐率${corrPct}%。人口增加${popGrowth}万，${grainDesc}。`,'neutral');
 
   // 战争年度消耗
   warYearEndCheck();
@@ -2787,18 +2889,33 @@ function _doEndYear(){
   // 检查官员忠诚度危机
   checkOfficialLoyalty();
 
-  // 官员自然老化（每年+1岁，高龄官员可能退休）
+  // 官员自然老化（每年+1岁，高龄官员可能退休/病死）
   const allOff=[...COURT_OFFICIALS,...CIVIL_OFFICIALS,...MILITARY_OFFICIALS];
   allOff.forEach(o=>{
     if(o.id==='qian_hongchu') return;
     o.age = (o.age||40)+1;
     const loyaltyDrift = Math.floor(Math.random()*5)-2 + (G.stats.stability>60?1:-1);
     o.loyalty = Math.max(10, Math.min(100, (o.loyalty||70)+loyaltyDrift));
+    // B项：高龄致仕或病死，记录空缺
+    let departed = false;
     if(o.age>=70 && Math.random()<0.3){
       addHistory(`${o.name}年迈致仕，告老还乡。`, 'neutral');
+      departed = true;
+    } else if(o.age>=50 && Math.random()<0.04){
+      addHistory(`${o.name}积劳成疾，不幸病逝，享年${o.age}岁。`, 'bad');
+      departed = true;
+    }
+    if(departed){
+      const group = COURT_OFFICIALS.find(x=>x.id===o.id)?'court':CIVIL_OFFICIALS.find(x=>x.id===o.id)?'civil':'military';
+      _recordVacancy(o.id, o.role, group);
       removeOfficial(o.id);
     }
   });
+
+  // E项：年度灾害检查
+  _checkAnnualDisaster();
+  // D项：邻国使者生成
+  _generateEnvoyEvents();
 
   updateStats();
   renderActions();
@@ -2902,6 +3019,11 @@ function startGame(){
   G.currentSystem='zhengwu';
   G.prefectureView=null;
   G.war=null; G.warHistory=[];
+  G.taxRate='normal';
+  G.vacantOffices=[];
+  G.envoyQueue=[];
+  G.activeDisaster=null;
+  G.tradeRoutes=[];
   // 重置军队单位
   MILITARY_UNITS.forEach(u=>{ u.morale=Math.max(60,u.morale); u.supply=Math.max(60,u.supply); });
   // 重置NATIONS关系
@@ -3963,6 +4085,401 @@ function checkAnnualSpecialEvents(){
     }
   }
 }
+
+// ===================================================
+//  A项：税率系统 - 民变事件
+// ===================================================
+function _triggerRebellionEvent(){
+  if(G.yearEvents.find(e=>e.id==='rebellion_event')) return; // 避免重复
+  G.yearEvents.unshift({
+    id: 'rebellion_event',
+    tag: 'urgent', tagText: '民变',
+    title: '饥民揭竿而起',
+    scene: `苛政之下，民不聊生。${G.taxRate==='harsh'?'苛政重税，':'高额赋税，'}各地饥民聚众，已有数千人冲击官府，局势危急！`,
+    desc: `民心已降至${G.stats.people}，百姓忍无可忍。若不立即处置，恐成大乱。`,
+    choices:[
+      { label:'【立即减税】', text:'宣布减税，开仓放粮，安抚民心', cost:20,
+        effect:{ people:+15, stability:+8, grain:-40 },
+        result:{ icon:'🌾', title:'民心稍安', desc:'大王宣布减税，开仓放粮，饥民渐渐散去。民心有所回升，但积怨仍深，需持续改善。', type:'good' },
+        onConfirm:()=>{ G.taxRate='normal'; }
+      },
+      { label:'【出兵镇压】', text:'调兵镇压，强行平息民变', cost:0,
+        effect:{ people:-10, stability:-8, military:-5, prestige:-8 },
+        result:{ icon:'⚔️', title:'强行镇压', desc:'军队镇压了民变，但死伤惨重，民间怨恨更深。此举治标不治本，日后恐有更大动乱。', type:'bad' }
+      },
+      { label:'【招抚首领】', text:'派人招抚民变首领，许以官职，分化瓦解', cost:10,
+        effect:{ people:+5, stability:+3, diplomacy:+2 },
+        result:{ icon:'🤝', title:'招抚得当', desc:'民变首领被招抚，大部分饥民散去。虽未根本解决问题，但暂时稳住了局势。', type:'neutral' }
+      },
+    ]
+  });
+  addHistory('⚠️ 民变爆发！饥民聚众冲击官府！', 'bad');
+  showToast('⚠️ 民变爆发！请立即处置！', 'warn');
+}
+
+// 税率调整行动（在内政系统里调用）
+function setTaxRate(rate){
+  if(!TAX_RATE_CONFIG[rate]) return;
+  const old = TAX_RATE_CONFIG[G.taxRate];
+  const newCfg = TAX_RATE_CONFIG[rate];
+  G.taxRate = rate;
+  addHistory(`调整税率：${old.label} → ${newCfg.label}。${newCfg.desc}`, rate==='low'?'good':rate==='normal'?'neutral':'bad');
+  showToast(`税率已调整为：${newCfg.label}`, rate==='low'||rate==='normal'?'info':'warn');
+  updateStats();
+  renderSysDetail(G.currentSystem);
+}
+
+// ===================================================
+//  B项：官职空缺系统
+// ===================================================
+// 各类官职空缺的年度惩罚
+const OFFICE_VACANCY_PENALTY = {
+  court:    { stability:-3, culture:-2 },
+  civil:    { people:-3, agri:-2 },
+  military: { military:-4, defense:-2 },
+};
+
+function _recordVacancy(officialId, role, group){
+  if(!(G.vacantOffices||[]).find(v=>v.id===officialId)){
+    G.vacantOffices = G.vacantOffices || [];
+    G.vacantOffices.push({ id: officialId, role, group, since: G.turn });
+    addHistory(`⚠️ ${role}出现空缺，需尽快选拔新官。`, 'bad');
+    showToast(`⚠️ ${role}空缺！`, 'warn');
+    // 将选拔事件加入事件队列
+    _pushRecruitEvent(officialId, role, group);
+  }
+}
+
+function _pushRecruitEvent(vacId, role, group){
+  const candidates = _generateCandidates(group);
+  G.yearEvents.push({
+    id: `recruit_${vacId}`,
+    tag: 'politics', tagText: '选拔',
+    title: `选拔新任${role}`,
+    scene: `${role}一职出现空缺，朝廷需尽快选拔贤才补缺，以免政务荒废。`,
+    desc: `请从以下候选人中选拔一位担任${role}：`,
+    choices: candidates.map(c=>({
+      label: `【${c.name}】${c.trait}·能力${c.ability}`,
+      text: `任命${c.name}为${role}，${c.bio}`,
+      effect: c.effect,
+      result: { icon:'📜', title:`${c.name}走马上任`, desc:`${c.name}接受任命，出任${role}。${c.bio}`, type:'good' },
+      onConfirm: ()=>{ _appointNewOfficial(c, role, group, vacId); }
+    }))
+  });
+}
+
+function _generateCandidates(group){
+  const pools = {
+    court:    [['张文远','博学','精通文治礼制',{culture:+5,stability:+3}],['李守正','刚直','执法严明，不畏权贵',{stability:+5,people:+2}],['王德昭','圆融','善于协调各方关系',{diplomacy:+4,stability:+2}]],
+    civil:    [['陈民安','务实','长于农政水利',{agri:+5,people:+3}],['刘丰年','勤勉','治理地方有方',{people:+4,stability:+2}],['赵惠民','仁厚','深得百姓爱戴',{people:+6,stability:+1}]],
+    military: [['韩猛将','勇猛','骁勇善战，屡立战功',{military:+5,defense:+2}],['周守备','谨慎','善于防守，稳重可靠',{defense:+5,military:+2}],['吴先锋','果断','进攻犀利，士气高昂',{military:+6,people:-1}]],
+  };
+  return (pools[group]||pools.court).map(([name,trait,bio,effect])=>({
+    name, trait, bio, effect,
+    ability: 60 + Math.floor(Math.random()*25),
+    id: `recruit_${name}_${Date.now()}`
+  }));
+}
+
+function _appointNewOfficial(candidate, role, group, vacId){
+  const newOff = {
+    id: candidate.id,
+    name: candidate.name,
+    role,
+    emoji: group==='military'?'⚔️':group==='civil'?'🏛️':'📜',
+    color: '#c9a84c',
+    age: 25 + Math.floor(Math.random()*20),
+    loyalty: 70 + Math.floor(Math.random()*20),
+    ability: candidate.ability,
+    skill: group==='military'?'军事':group==='civil'?'内政':'文治',
+    trait: candidate.trait,
+    bio: candidate.bio,
+  };
+  const arr = group==='court'?COURT_OFFICIALS:group==='civil'?CIVIL_OFFICIALS:MILITARY_OFFICIALS;
+  arr.push(newOff);
+  G.vacantOffices = (G.vacantOffices||[]).filter(v=>v.id!==vacId);
+  addHistory(`✅ ${candidate.name}出任${role}，空缺已补。`, 'good');
+  renderOfficialList();
+}
+
+// ===================================================
+//  D项：邻国使者系统
+// ===================================================
+const ENVOY_TEMPLATES = [
+  {
+    id:'envoy_alliance', nationId:'nantang', type:'alliance',
+    condition: n=>n.relation>=40 && n.relation<70,
+    title: s=>`${s.name}遣使求盟`,
+    scene: s=>`${s.emoji}${s.name}使者抵达杭州，带来国书，提议两国结为盟友，共抗后周压力。`,
+    choices: n=>[
+      { label:'【欣然结盟】', text:'接受结盟，互派使节，共同应对后周', effect:{diplomacy:+12,prestige:+5,military:+3},
+        result:{icon:'🤝',title:'吴越南唐结盟',desc:`吴越与${n.name}正式结盟，两国互派使节，共同应对外部压力。外交格局大为改善。`,type:'good'},
+        onConfirm:()=>{ const nat=NATIONS.find(x=>x.id===n.id); if(nat){nat.relation=Math.min(100,nat.relation+20);nat.status='ally';nat.statusText='盟友';} }
+      },
+      { label:'【婉言谢绝】', text:'以需从长计议为由，婉拒结盟', effect:{diplomacy:-3},
+        result:{icon:'📜',title:'婉拒结盟',desc:`吴越婉拒了${n.name}的结盟提议，双方关系略有降温，但未破裂。`,type:'neutral'}
+      },
+      { label:'【索取好处】', text:'趁机要求对方割让土地或岁贡方可结盟', effect:{diplomacy:-8,treasury:+20,prestige:+3},
+        result:{icon:'💰',title:'漫天要价',desc:`${n.name}使者愤而离去，结盟未成，但吴越的强硬姿态令对方有所忌惮。`,type:'neutral'}
+      },
+    ]
+  },
+  {
+    id:'envoy_trade', nationId:'min', type:'trade',
+    condition: n=>n.relation>=30,
+    title: s=>`${s.name}请求通商`,
+    scene: s=>`${s.emoji}${s.name}商人随使者而来，希望开辟两国贸易往来，互通有无。`,
+    choices: n=>[
+      { label:'【开放通商】', text:'同意开放贸易，互派商队', effect:{commerce:+10,diplomacy:+8,treasury:+15},
+        result:{icon:'⛵',title:'通商大兴',desc:`吴越与${n.name}正式开通商路，两国商队往来频繁，财货流通，国库充盈。`,type:'good'},
+        onConfirm:()=>{ _openTradeRoute(n.id); }
+      },
+      { label:'【征收重税】', text:'同意通商，但征收高额关税', effect:{commerce:+3,diplomacy:-3,treasury:+25},
+        result:{icon:'💰',title:'重税通商',desc:`通商开启，但高额关税令商人怨声载道，贸易规模受限。`,type:'neutral'},
+        onConfirm:()=>{ _openTradeRoute(n.id, 0.6); }
+      },
+      { label:'【拒绝通商】', text:'以安全为由，拒绝开放贸易', effect:{diplomacy:-5},
+        result:{icon:'🚫',title:'拒绝通商',desc:`吴越拒绝了通商请求，${n.name}使者失望而归。`,type:'bad'}
+      },
+    ]
+  },
+  {
+    id:'envoy_tribute_demand', nationId:'zhou', type:'tribute',
+    condition: ()=>true,
+    title: ()=>'后周使者催缴岁贡',
+    scene: ()=>'后周使者持天子诏书抵达，要求吴越按时缴纳岁贡，并增加军粮供应。',
+    choices: ()=>[
+      { label:'【慷慨应允】', text:'全额缴纳，表示忠心', effect:{diplomacy:+8,treasury:-25,prestige:-3},
+        result:{icon:'🏮',title:'宗主满意',desc:'后周天子满意，赐予吴越更高封号，两国关系稳固。',type:'neutral'}
+      },
+      { label:'【讨价还价】', text:'缴纳部分，以灾情为由请求减免', effect:{diplomacy:+3,treasury:-12},
+        result:{icon:'🤝',title:'折中处置',desc:'后周接受了部分岁贡，双方关系维持稳定。',type:'good'}
+      },
+      { label:'【拖延推诿】', text:'以国内困难为由，请求延期缴纳', effect:{diplomacy:-8,prestige:-5},
+        result:{icon:'⚠️',title:'关系紧张',desc:'后周使者不满而归，两国关系趋于紧张，需尽快修复。',type:'bad'}
+      },
+    ]
+  },
+  {
+    id:'envoy_peace', nationId:'nantang', type:'peace',
+    condition: n=>n.status==='hostile',
+    title: s=>`${s.name}遣使求和`,
+    scene: s=>`战事连绵，${s.emoji}${s.name}主动遣使求和，希望两国罢兵言和，恢复邦交。`,
+    choices: n=>[
+      { label:'【接受议和】', text:'接受求和，双方停战，恢复邦交', effect:{diplomacy:+10,prestige:+5,people:+5},
+        result:{icon:'🕊️',title:'两国议和',desc:`吴越与${n.name}正式议和，边境恢复平静，百姓得以休养生息。`,type:'good'},
+        onConfirm:()=>{ const nat=NATIONS.find(x=>x.id===n.id); if(nat){nat.relation=Math.min(100,nat.relation+25);nat.status='neutral';nat.statusText='中立';} }
+      },
+      { label:'【趁势索赔】', text:'接受议和，但要求对方赔偿损失', effect:{diplomacy:+3,treasury:+20,prestige:+8},
+        result:{icon:'💰',title:'索赔议和',desc:`${n.name}支付了赔偿，双方议和。吴越声望有所提升。`,type:'good'},
+        onConfirm:()=>{ const nat=NATIONS.find(x=>x.id===n.id); if(nat){nat.relation=Math.min(100,nat.relation+10);nat.status='neutral';nat.statusText='中立';} }
+      },
+      { label:'【拒绝议和】', text:'拒绝求和，继续施压', effect:{diplomacy:-5,military:+3,prestige:+3},
+        result:{icon:'⚔️',title:'拒绝议和',desc:`吴越拒绝了${n.name}的求和，继续保持强硬姿态。`,type:'neutral'}
+      },
+    ]
+  },
+];
+
+function _generateEnvoyEvents(){
+  // 每年有40%概率生成一个使者事件
+  if(Math.random() > 0.40) return;
+  // 随机选一个满足条件的模板
+  const eligible = ENVOY_TEMPLATES.filter(t=>{
+    const nation = NATIONS.find(n=>n.id===t.nationId);
+    if(!nation) return false;
+    return t.condition(nation);
+  });
+  if(eligible.length === 0) return;
+  const tmpl = eligible[Math.floor(Math.random()*eligible.length)];
+  const nation = NATIONS.find(n=>n.id===tmpl.nationId);
+  if(!nation) return;
+  // 避免同类型使者重复
+  if(G.yearEvents.find(e=>e.id===`envoy_${tmpl.id}`)) return;
+
+  G.yearEvents.push({
+    id: `envoy_${tmpl.id}_${G.turn}`,
+    tag: 'diplomacy', tagText: '外交',
+    title: tmpl.title(nation),
+    scene: tmpl.scene(nation),
+    desc: '',
+    choices: tmpl.choices(nation),
+  });
+  addHistory(`🏮 外交：${tmpl.title(nation)}`, 'neutral');
+  showToast(`🏮 ${tmpl.title(nation)}`, 'info');
+}
+
+// ===================================================
+//  E项：自然灾害系统
+// ===================================================
+const DISASTER_TYPES = [
+  {
+    id:'flood', name:'洪涝灾害', icon:'🌊', weight:20,
+    condition: s=>s.agri<70 || Math.random()<0.08,
+    severity: ()=>Math.random()<0.3?'severe':'moderate',
+    effect: (sev)=>sev==='severe'
+      ? { grain:-80, people:-12, agri:-8, stability:-5 }
+      : { grain:-40, people:-6, agri:-4 },
+    reliefCost: (sev)=>sev==='severe'?25:12,
+    scene: (pref)=>`${pref}一带连日暴雨，江河决堤，大片农田被淹，数万百姓流离失所。`,
+  },
+  {
+    id:'drought', name:'旱灾', icon:'☀️', weight:20,
+    condition: s=>Math.random()<0.10,
+    severity: ()=>Math.random()<0.25?'severe':'moderate',
+    effect: (sev)=>sev==='severe'
+      ? { grain:-100, people:-15, agri:-10, stability:-6 }
+      : { grain:-50, people:-8, agri:-5 },
+    reliefCost: (sev)=>sev==='severe'?30:15,
+    scene: (pref)=>`${pref}大旱，河流干涸，庄稼颗粒无收，百姓嗷嗷待哺。`,
+  },
+  {
+    id:'locust', name:'蝗灾', icon:'🦗', weight:15,
+    condition: s=>s.agri<65 || Math.random()<0.06,
+    severity: ()=>Math.random()<0.2?'severe':'moderate',
+    effect: (sev)=>sev==='severe'
+      ? { grain:-90, people:-10, agri:-12, commerce:-5 }
+      : { grain:-45, people:-5, agri:-6 },
+    reliefCost: (sev)=>sev==='severe'?20:10,
+    scene: (pref)=>`${pref}遮天蔽日的蝗虫铺天盖地而来，所过之处寸草不生，粮食损失惨重。`,
+  },
+  {
+    id:'epidemic', name:'瘟疫', icon:'🤒', weight:12,
+    condition: s=>s.people<60 || Math.random()<0.06,
+    severity: ()=>Math.random()<0.2?'severe':'moderate',
+    effect: (sev)=>sev==='severe'
+      ? { people:-18, stability:-8, military:-5, population:-5 }
+      : { people:-10, stability:-4, military:-2 },
+    reliefCost: (sev)=>sev==='severe'?28:14,
+    scene: (pref)=>`${pref}爆发瘟疫，病死者众，百姓人心惶惶，城中已有封街之议。`,
+  },
+];
+
+function _checkAnnualDisaster(){
+  // 已有活跃灾害则不再叠加
+  if(G.activeDisaster) return;
+  // 约25%概率触发灾害
+  if(Math.random() > 0.25) return;
+
+  const totalWeight = DISASTER_TYPES.reduce((s,d)=>s+d.weight,0);
+  let r = Math.random()*totalWeight;
+  let dtype = DISASTER_TYPES[DISASTER_TYPES.length-1];
+  for(const d of DISASTER_TYPES){ r-=d.weight; if(r<=0){dtype=d;break;} }
+
+  if(!dtype.condition(G.stats)) return;
+
+  const sev = dtype.severity();
+  const pref = PREFECTURES[Math.floor(Math.random()*PREFECTURES.length)];
+  const effect = dtype.effect(sev);
+  const reliefCost = dtype.reliefCost(sev);
+  const sevLabel = sev==='severe'?'严重':'一般';
+
+  G.activeDisaster = { type:dtype.id, severity:sev, turn:G.turn, prefId:pref.id };
+
+  G.yearEvents.unshift({
+    id: `disaster_${dtype.id}_${G.turn}`,
+    tag: 'urgent', tagText: '天灾',
+    title: `${dtype.icon} ${sevLabel}${dtype.name}`,
+    scene: dtype.scene(pref.name),
+    desc: `受灾地区：${pref.name}。预计损失：${Object.entries(effect).map(([k,v])=>`${getStatName(k)}${v}`).join('、')}。`,
+    choices:[
+      { label:`【全力赈灾】花费${reliefCost}万贯`, text:'开仓放粮，调兵救灾，全力应对', cost: reliefCost,
+        effect:{ ...effect, people: Math.round((effect.people||0)*0.3), grain: Math.round((effect.grain||0)*0.4), stability:+5 },
+        result:{ icon:dtype.icon, title:'赈灾得力', desc:`大王全力赈灾，损失大为减少，百姓感念王恩。`, type:'good' },
+        onConfirm:()=>{ G.activeDisaster=null; G.savings=Math.max(0,G.savings-reliefCost); }
+      },
+      { label:`【部分赈济】花费${Math.round(reliefCost*0.5)}万贯`, text:'拨出部分钱粮，以工代赈', cost: Math.round(reliefCost*0.5),
+        effect:{ ...effect, people: Math.round((effect.people||0)*0.6), grain: Math.round((effect.grain||0)*0.65) },
+        result:{ icon:'📜', title:'部分赈济', desc:'赈灾力度有限，损失较大，但局势基本稳定。', type:'neutral' },
+        onConfirm:()=>{ G.activeDisaster=null; G.savings=Math.max(0,G.savings-Math.round(reliefCost*0.5)); }
+      },
+      { label:'【坐视不理】', text:'认为地方自有应对，朝廷不予干预', cost:0,
+        effect,
+        result:{ icon:'💀', title:'民心尽失', desc:'朝廷袖手旁观，灾情蔓延，百姓怨声载道，民心大失。', type:'bad' },
+        onConfirm:()=>{ G.activeDisaster=null; }
+      },
+    ]
+  });
+  addHistory(`⚠️ 天灾：${pref.name}发生${sevLabel}${dtype.name}！`, 'bad');
+  showToast(`⚠️ 天灾！${pref.name}${dtype.name}！`, 'warn');
+}
+
+// ===================================================
+//  F项：商路系统
+// ===================================================
+const TRADE_ROUTE_DEFS = {
+  min:    { name:'闽越商路', partner:'闽国', income:18, desc:'经温州、福州，与闽国互通丝绸、茶叶', condition: n=>n.relation>=35 },
+  nantang:{ name:'江南商路', partner:'南唐', income:25, desc:'经湖州、润州，与南唐互通粮食、瓷器', condition: n=>n.relation>=45 },
+  zhou:   { name:'中原商路', partner:'后周', income:30, desc:'经运河北上，与中原互通货物', condition: n=>n.relation>=50 },
+  sea:    { name:'海上丝路', partner:'大食/新罗', income:35, desc:'明州出海，与大食、新罗、日本通商', condition: ()=>true },
+};
+
+function _openTradeRoute(nationId, incomeMult=1.0){
+  const def = TRADE_ROUTE_DEFS[nationId];
+  if(!def) return;
+  if((G.tradeRoutes||[]).find(r=>r.id===nationId)) return; // 已存在
+  G.tradeRoutes = G.tradeRoutes || [];
+  G.tradeRoutes.push({
+    id: nationId,
+    name: def.name,
+    partner: def.partner,
+    income: Math.round(def.income * incomeMult),
+    turnsActive: 0,
+    blocked: false,
+  });
+  addHistory(`🚢 开辟${def.name}，每年商路收入+${Math.round(def.income*incomeMult)}万贯。`, 'good');
+}
+
+function openTradeRouteModal(){
+  const available = Object.entries(TRADE_ROUTE_DEFS).filter(([id, def])=>{
+    if((G.tradeRoutes||[]).find(r=>r.id===id)) return false;
+    const nation = NATIONS.find(n=>n.id===id);
+    if(id==='sea') return true;
+    return nation && def.condition(nation);
+  });
+  if(available.length===0){
+    showToast('当前无可开辟的新商路', 'info'); return;
+  }
+  const cost = 15;
+  if(G.savings < cost){ showToast(`开辟商路需要${cost}万贯存款`, 'warn'); return; }
+
+  const opts = available.map(([id,def])=>`
+    <div class="trade-route-opt" onclick="confirmOpenRoute('${id}',${cost})" style="padding:8px 10px;margin:4px 0;background:rgba(201,168,76,0.08);border:1px solid rgba(201,168,76,0.2);border-radius:6px;cursor:pointer">
+      <div style="font-weight:bold;color:#c9a84c">🚢 ${def.name}</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${def.desc}</div>
+      <div style="font-size:11px;color:#2ecc71;margin-top:2px">每年收入 +${def.income}万贯 · 开辟费用 ${cost}万贯</div>
+    </div>`).join('');
+
+  showModal('开辟商路', `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">选择要开辟的商路（存款：${G.savings}万贯）：</div>${opts}`);
+}
+
+function confirmOpenRoute(id, cost){
+  closeModal();
+  G.savings = Math.max(0, G.savings - cost);
+  _openTradeRoute(id);
+  showToast(`✅ 商路已开辟！`, 'info');
+  updateStats();
+}
+
+// 通用弹窗（简单实现）
+function showModal(title, bodyHtml){
+  let modal = document.getElementById('generic-modal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'generic-modal';
+    modal.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML=`<div style="background:#1a1a2e;border:1px solid rgba(201,168,76,0.3);border-radius:10px;padding:20px;max-width:380px;width:90%;max-height:80vh;overflow-y:auto">
+      <div id="generic-modal-title" style="font-size:14px;font-weight:bold;color:#c9a84c;margin-bottom:12px"></div>
+      <div id="generic-modal-body"></div>
+      <button onclick="closeModal()" style="margin-top:12px;width:100%;padding:8px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:6px;color:#c9a84c;cursor:pointer">关闭</button>
+    </div>`;
+    document.body.appendChild(modal);
+  }
+  document.getElementById('generic-modal-title').textContent = title;
+  document.getElementById('generic-modal-body').innerHTML = bodyHtml;
+  modal.style.display='flex';
+}
+function closeModal(){ const m=document.getElementById('generic-modal'); if(m) m.style.display='none'; }
 
 // ===================================================
 //  左栏面板切换（官员 / 州郡）
@@ -5134,6 +5651,11 @@ function serializeGame(){
     scholars: G.scholars,
     idleScholars: G.idleScholars,
     warThreat: G.warThreat,
+    taxRate: G.taxRate,
+    vacantOffices: G.vacantOffices,
+    envoyQueue: G.envoyQueue,
+    activeDisaster: G.activeDisaster,
+    tradeRoutes: G.tradeRoutes,
     // 可变数据：官员、军队、州郡、外交
     officials: {
       court:    COURT_OFFICIALS.map(o=>({ id:o.id, age:o.age, loyalty:o.loyalty, ability:o.ability })),
@@ -5168,6 +5690,11 @@ function deserializeGame(data){
   G.scholars      = data.scholars || [];
   G.idleScholars  = data.idleScholars || [];
   G.warThreat     = data.warThreat || 0;
+  G.taxRate       = data.taxRate || 'normal';
+  G.vacantOffices = data.vacantOffices || [];
+  G.envoyQueue    = data.envoyQueue || [];
+  G.activeDisaster= data.activeDisaster || null;
+  G.tradeRoutes   = data.tradeRoutes || [];
 
   // 恢复官员可变属性
   if(data.officials){
