@@ -85,6 +85,22 @@ const G = {
   heirs: [],                 // 子嗣列表 [{id,name,age,ability,loyalty,isCrownPrince,trait}]
   crownPrinceId: null,       // 当前太子id
   successionCrisis: false,   // 是否处于储位之争
+  // ── 本轮A项：州郡深度治理 ──
+  prefTaxRates: {},          // 各州独立税率调整 {prefId: 'low'|'normal'|'high'}
+  prefIrrigations: {},       // 各州水利投入次数 {prefId: number}
+  prefMilitia: {},           // 各州乡勇数量 {prefId: number}（千人）
+  // ── 本轮B项：官员派系 ──
+  factions: {                // 三大派系影响力（0-100）
+    civil: 50,               // 文官派（翰林、礼部等）
+    military: 50,            // 武将派（各军将领）
+    clan: 50,                // 宗室派（钱氏宗亲）
+  },
+  officialGrowthLog: [],     // 官员成长记录（本年）
+  // ── 本轮C项：科技研发树 ──
+  techs: {},                 // 已研发科技 {techId: true}
+  techInProgress: null,      // 当前研发中 {techId, turnsLeft, cost}
+  // ── 本轮E项：战争深化 ──
+  warOccupied: [],           // 已占领的州郡 [{prefId, name, turnOccupied, stability}]
 };
 
 // ===================================================
@@ -724,7 +740,8 @@ const SYSTEMS = {
       { id:'event',    icon:'📋', name:'处理政务', baseCost:0,  desc:'处理一件随机政务事件（随机收益，可多次处理）', highlight:true },
       { id:'exam',     icon:'🎓', name:'开科举',   baseCost:15, desc:'举办科举考试，选拔人才（每年一次，基础花费15万贯）', oncePerYear:true },
       { id:'tour',     icon:'🚶', name:'微服私访', baseCost:3,  desc:'乔装出行，了解民情（消耗精力20，每年一次）', oncePerYear:true, energyCost:20 },
-      { id:'anticorr', icon:'⚖️', name:'整顿吏治', baseCost:10, desc:'严查贪腐，整肃官场风气（每年一次，基础花费10万贯）', oncePerYear:true }
+      { id:'anticorr', icon:'⚖️', name:'整顿吏治', baseCost:10, desc:'严查贪腐，整肃官场风气（每年一次，基础花费10万贯）', oncePerYear:true },
+      { id:'tech_tree', icon:'🔬', name:'科技研发', baseCost:0,  desc:'打开科技研发树，投入资金研发各类科技，获得永久加成' }
     ]
   },
   junshi: {
@@ -945,6 +962,231 @@ const EVENTS = [
       { label:'【开仓放粮】', text:'立即开仓放粮，亲自出城安抚，承诺减免赋税', cost:16, effect:{people:+7,culture:+3}, result:{icon:'🌾',title:'仁君爱民',desc:'大王亲自出城，开仓放粮，饥民感激涕零，纷纷跪拜。危机化解，大王仁君之名传遍吴越。',type:'good'} },
       { label:'【恩威并施】', text:'一边放粮安抚，一边逮捕带头闹事者', cost:8, effect:{people:+3,military:+2}, result:{icon:'⚖️',title:'恩威并施',desc:'饥民得到救助，带头闹事者被逮捕，局势平息。此举虽有效，但部分百姓对逮捕行动颇有微词。',type:'neutral'} },
       { label:'【武力镇压】', text:'出兵镇压，以儆效尤', cost:3, effect:{people:-12,military:+2}, result:{icon:'💀',title:'血腥镇压',desc:'军队镇压饥民，死伤数十人。消息传开，吴越各地人心惶惶，民间开始流传反王之声。',type:'bad'} }
+    ]},
+  // ── D项扩充：30+条五代十国史料事件 ──
+  { id:'zhou_reform', tag:'good', tagText:'时局', title:'后周柴荣改革',
+    scene:'细作来报：后周天子柴荣正大力推行改革，整顿军队，清查土地，国力蒸蒸日上。',
+    desc:'后周柴荣雄才大略，推行均田、整军、兴农诸策，后周国力迅速增强，已成天下最强之国。吴越当如何应对？',
+    advisor:'shen_chongyi', advisorText:'大王，后周日益强盛，吴越须早作打算。臣建议一方面加强与后周的外交往来，另一方面也要充实自身实力，以备不测。',
+    choices:[
+      { label:'【遣使朝贡】', text:'主动遣使后周，携厚礼朝贡，表示臣服之意', cost:15, effect:{diplomacy:+8,prestige:-3,people:+2}, result:{icon:'🏮',title:'宗主满意',desc:'后周柴荣接受朝贡，赐予吴越王更高封号。吴越在后周庇护下得以安心发展。',type:'good'} },
+      { label:'【暗中备战】', text:'表面恭顺，暗中加强军备，以防后周南下', cost:12, effect:{military:+5,diplomacy:-2,stability:+2}, result:{icon:'⚔️',title:'未雨绸缪',desc:'吴越暗中扩充军备，边境防线得到加强。虽然外交上略显被动，但军事实力大为提升。',type:'neutral'} },
+      { label:'【联唐制周】', text:'秘密联络南唐，共同应对后周的威胁', cost:8, effect:{diplomacy:+5,military:+3,prestige:+2}, result:{icon:'🤝',title:'南北联盟',desc:'吴越与南唐秘密结盟，共同应对后周压力。此举虽有风险，但暂时稳定了局势。',type:'neutral'} }
+    ]},
+  { id:'lin_renzao_defect', tag:'crisis', tagText:'军情', title:'镇东军副将异动',
+    scene:'密报：镇东军副指挥使林仁肇与南唐使者秘密接触，似有异心。',
+    desc:'林仁肇骁勇善战，但忠诚度一直令人担忧。此次与南唐使者秘密接触，是否意味着他有意投奔南唐？',
+    advisor:'shen_chongyi', advisorText:'大王，林仁肇此人能力出众，但忠心存疑。臣建议秘密调查，若属实，须尽早处置，以免养虎为患。',
+    choices:[
+      { label:'【厚加恩赏】', text:'赐予林仁肇厚赏，加官进爵，以恩义笼络', cost:20, effect:{military:+4,stability:+3,people:+2}, result:{icon:'🎖️',title:'感恩效忠',desc:'林仁肇受到大王厚赏，感激涕零，誓死效忠。其骁勇之名令南唐不敢轻举妄动。',type:'good'} },
+      { label:'【秘密监视】', text:'暗中派人监视，收集证据，伺机处置', cost:5, effect:{military:-2,stability:+2}, result:{icon:'🕵️',title:'暗中监控',desc:'林仁肇被秘密监视，其与南唐的联系被切断。虽然此举令军中人心略有不安，但消除了隐患。',type:'neutral'} },
+      { label:'【借故除之】', text:'以军纪为由，将林仁肇调离要职或处置', cost:0, effect:{military:-6,stability:-3,people:-2}, result:{icon:'⚠️',title:'自损臂膀',desc:'林仁肇被调离，镇东军战力大损。此举令军中将士人心惶惶，担忧大王猜忌功臣。',type:'bad'} }
+    ]},
+  { id:'qiantang_flood', tag:'urgent', tagText:'水患', title:'钱塘江决堤',
+    scene:'钱塘江水位暴涨，杭州城外堤坝告急，若不及时加固，将有决堤之虞。',
+    desc:'钱塘江是吴越的母亲河，历代先王均重视海塘修缮。此次水患若处置不当，将淹没大片农田，危及杭州安全。',
+    advisor:'wu_chengyi', advisorText:'大王，钱塘江海塘乃吴越立国之本！先王钱镠曾亲督修建，今日若决堤，不仅农田受损，更有损先王遗泽。臣请大王立即拨款抢修！',
+    choices:[
+      { label:'【倾力抢修】', text:'调集全国工匠，拨出重金，全力抢修海塘', cost:22, effect:{people:+6,agri:+4,culture:+3}, result:{icon:'🌊',title:'海塘固若金汤',desc:'大王倾力抢修，钱塘江海塘得到全面加固。百姓感念大王爱民之心，吴越农业生产得到保障。',type:'good'} },
+      { label:'【应急加固】', text:'紧急调拨资金，对最危险的堤段进行加固', cost:10, effect:{people:+3,agri:+2}, result:{icon:'🏗️',title:'险情暂解',desc:'应急加固完成，险情暂时解除。但部分堤段仍存隐患，需日后继续修缮。',type:'neutral'} },
+      { label:'【听天由命】', text:'认为此乃天意，不作大规模干预', cost:0, effect:{people:-8,agri:-5,stability:-3}, result:{icon:'💀',title:'洪水肆虐',desc:'钱塘江决堤，大片农田被淹，百姓流离失所。民间怨声载道，大王失民心。',type:'bad'} }
+    ]},
+  { id:'celadon_kiln', tag:'good', tagText:'工艺', title:'越窑青瓷盛名',
+    scene:'越州刺史来报，越窑青瓷工艺大有进步，已有商人愿以重金购买，远销海外。',
+    desc:'越窑青瓷素有"千峰翠色"之誉，是吴越最重要的出口商品之一。若能加大投入，将大大增加国库收入。',
+    advisor:'mz_zhi', advisorText:'大王，越窑青瓷已名扬海外！大食、新罗商人争相购买，价格不菲。若能扩大生产，开辟更多商路，吴越将财源滚滚！',
+    choices:[
+      { label:'【皇家御窑】', text:'设立皇家御窑，大力扶持，提升工艺水平', cost:12, effect:{commerce:+7,culture:+5,diplomacy:+3}, result:{icon:'🏺',title:'御窑名扬天下',desc:'皇家御窑建立，越窑青瓷工艺达到新高度。"秘色瓷"名扬天下，各国争相购买，吴越声望大振。',type:'good'} },
+      { label:'【适度扶持】', text:'给予一定补贴，鼓励工匠改进工艺', cost:5, effect:{commerce:+4,culture:+3}, result:{icon:'🎨',title:'工艺提升',desc:'越窑工艺稳步提升，商贸收入有所增加。',type:'neutral'} },
+      { label:'【放任自流】', text:'不作干预，让市场自行调节', cost:0, effect:{commerce:+1}, result:{icon:'📦',title:'自然发展',desc:'越窑自然发展，但错失了大规模扩张的良机。',type:'bad'} }
+    ]},
+  { id:'buddhism_boom', tag:'good', tagText:'佛事', title:'佛教兴盛',
+    scene:'钱弘俶笃信佛教，各地寺院纷纷请求拨款修缮，僧侣们也希望大王能主持大型法会。',
+    desc:'吴越历代君主均崇信佛教，钱弘俶更是虔诚的佛教信徒，曾铸造大量铜制阿育王塔。佛教的兴盛有助于稳定民心，但也需要大量资金。',
+    advisor:'lin_deyuan', advisorText:'大王，佛法慈悲，能安抚民心。先王钱镠曾大力兴佛，百姓至今感念。若大王能主持大型法会，必将大得民心，声望远播！',
+    choices:[
+      { label:'【大兴佛事】', text:'拨重金修缮寺院，主持大型法会，铸造阿育王塔', cost:18, effect:{people:+6,culture:+5,stability:+3,prestige:+4}, result:{icon:'🛕',title:'佛光普照',desc:'大王大兴佛事，各地寺院焕然一新。法会盛况空前，百姓感念大王虔诚，民心大振。吴越佛教文化声望远播海外。',type:'good'} },
+      { label:'【适度支持】', text:'拨款修缮主要寺院，举办小型法会', cost:8, effect:{people:+3,culture:+3,stability:+1}, result:{icon:'🙏',title:'佛法弘扬',desc:'寺院得到修缮，法会顺利举行，百姓对大王的虔诚颇为赞许。',type:'neutral'} },
+      { label:'【节制佛事】', text:'以国库紧张为由，减少对佛事的投入', cost:0, effect:{people:-3,culture:-2,stability:-1}, result:{icon:'😞',title:'僧侣失望',desc:'僧侣们对大王的决定颇为失望，部分百姓也认为大王不够虔诚，民心略有下降。',type:'bad'} }
+    ]},
+  { id:'wuyue_canal', tag:'good', tagText:'水利', title:'运河疏浚',
+    scene:'两浙转运使钱惟治上奏，大运河吴越段淤积严重，影响漕运和商贸往来，请求拨款疏浚。',
+    desc:'大运河是吴越与北方联系的重要通道，也是商贸往来的生命线。若能疏浚运河，将大大促进经济发展。',
+    advisor:'qian_weizhi', advisorText:'大王，运河乃吴越经济命脉！若能疏浚，不仅漕运畅通，商贸往来也将大为便利，国库收入必将增加！',
+    choices:[
+      { label:'【全面疏浚】', text:'拨重金全面疏浚运河，同时修缮沿岸码头', cost:20, effect:{commerce:+8,agri:+3,people:+4,diplomacy:+2}, result:{icon:'🚢',title:'运河畅通',desc:'运河疏浚完成，漕运大为便利。商船往来频繁，沿岸城市繁荣，国库收入大幅增加。',type:'good'} },
+      { label:'【重点疏浚】', text:'只疏浚最关键的淤积段，节省开支', cost:10, effect:{commerce:+4,agri:+1,people:+2}, result:{icon:'⛵',title:'局部改善',desc:'重点段疏浚完成，漕运有所改善，商贸往来更加便利。',type:'neutral'} },
+      { label:'【暂缓处理】', text:'以财政紧张为由，暂缓疏浚计划', cost:0, effect:{commerce:-3,agri:-1}, result:{icon:'😤',title:'运河淤积',desc:'运河继续淤积，漕运受阻，商贸往来不便，国库收入有所下降。',type:'bad'} }
+    ]},
+  { id:'nantang_poet', tag:'good', tagText:'文事', title:'南唐词人来访',
+    scene:'南唐著名词人冯延巳遣人送来诗词，并表示希望与吴越文人交流，共同切磋诗词之道。',
+    desc:'南唐文化繁盛，冯延巳等词人名满天下。若能与南唐文人建立交流，将大大提升吴越的文化声望。',
+    advisor:'lin_deyuan', advisorText:'大王，冯延巳乃当世词坛泰斗！若能与其建立交流，吴越文化必将大放异彩。臣建议大王亲自回函，邀请南唐文人来访！',
+    choices:[
+      { label:'【盛情邀请】', text:'亲自回函，盛情邀请南唐文人来访，举办文化交流盛会', cost:8, effect:{culture:+7,diplomacy:+5,people:+3}, result:{icon:'📜',title:'文化盛会',desc:'南唐文人应邀来访，与吴越文人切磋诗词，盛况空前。吴越文化声望大振，两国关系也因此改善。',type:'good'} },
+      { label:'【礼貌回应】', text:'礼貌回函，表示欢迎，但不作大规模安排', cost:3, effect:{culture:+3,diplomacy:+2}, result:{icon:'🎋',title:'文化往来',desc:'两国文人有所往来，文化交流稳步推进。',type:'neutral'} },
+      { label:'【婉言谢绝】', text:'以政务繁忙为由，婉拒文化交流', cost:0, effect:{culture:-2,diplomacy:-2}, result:{icon:'😞',title:'错失良机',desc:'吴越错失了与南唐文化交流的良机，文化声望略有下降。',type:'bad'} }
+    ]},
+  { id:'min_civil_war', tag:'good', tagText:'时局', title:'闽国内乱',
+    scene:'细作来报：闽国陈洪进与留从效争夺漳泉控制权，内乱不止，无暇北顾。',
+    desc:'闽国内乱是吴越的良机。趁此机会，可以加强对闽国边境的控制，甚至趁机扩张领土。',
+    advisor:'wu_yanfu', advisorText:'大王！闽国内乱，正是我吴越扩张的良机！末将请命，率兵南下，趁乱夺取闽国北部数州！',
+    choices:[
+      { label:'【趁乱扩张】', text:'趁闽国内乱，出兵夺取边境数州', cost:20, effect:{military:+5,prestige:+6,diplomacy:-5,people:-3}, result:{icon:'⚔️',title:'趁乱扩张',desc:'吴越趁闽国内乱，夺取了边境数州。领土扩大，声威大振，但也引起了周边诸国的警惕。',type:'good'} },
+      { label:'【坐收渔利】', text:'静观其变，待闽国内乱结束后，与胜者建立外交关系', cost:5, effect:{diplomacy:+5,prestige:+3}, result:{icon:'🤝',title:'外交得当',desc:'吴越静观其变，待闽国内乱平息后，与新的统治者建立了良好关系，外交格局大为改善。',type:'good'} },
+      { label:'【置之不理】', text:'不介入闽国内政，专注于内部建设', cost:0, effect:{stability:+2}, result:{icon:'📜',title:'专注内政',desc:'吴越不介入闽国内乱，专注于内部建设，政局稳定。',type:'neutral'} }
+    ]},
+  { id:'silk_trade_boom', tag:'good', tagText:'商贸', title:'丝绸贸易大兴',
+    scene:'明州港口来报，今年丝绸出口量大增，大食、新罗、日本商人争相购买，价格屡创新高。',
+    desc:'吴越丝绸享誉海外，是最重要的出口商品。今年贸易形势大好，如何把握这一良机？',
+    advisor:'mz_zhi', advisorText:'大王，今年丝绸贸易形势大好！若能扩大生产，开辟更多商路，吴越将财源滚滚！臣建议大力扶持丝织业，同时扩建明州港口。',
+    choices:[
+      { label:'【大力扶持】', text:'拨款扶持丝织业，扩建明州港口，大力发展海上贸易', cost:15, effect:{commerce:+8,diplomacy:+4,people:+3,treasury:+5}, result:{icon:'🧵',title:'丝路繁荣',desc:'吴越丝绸贸易大兴，明州港口日益繁荣。国库收入大幅增加，吴越商业声望远播海外。',type:'good'} },
+      { label:'【稳步发展】', text:'适度扶持，稳步扩大生产规模', cost:7, effect:{commerce:+4,diplomacy:+2,people:+1}, result:{icon:'📦',title:'稳步增长',desc:'丝绸贸易稳步增长，国库收入有所增加。',type:'neutral'} },
+      { label:'【征收重税】', text:'趁机大幅提高丝绸出口税，充实国库', cost:0, effect:{commerce:-3,diplomacy:-3,treasury:+10}, result:{icon:'💸',title:'杀鸡取卵',desc:'重税令商人怨声载道，部分商人转赴他处，长远来看损害了吴越的商业利益。',type:'bad'} }
+    ]},
+  { id:'confucian_school', tag:'good', tagText:'文教', title:'兴办书院',
+    scene:'翰林学士林德元上奏，建议在各州兴办书院，广开民智，培养人才。',
+    desc:'书院是培养人才的重要场所。若能在各州兴办书院，将大大提升吴越的文化水平和人才储备。',
+    advisor:'lin_deyuan', advisorText:'大王，书院乃文化之根本！若能在各州广设书院，不仅能培养人才，更能提升吴越的文化声望，令天下文人向往！',
+    choices:[
+      { label:'【广设书院】', text:'在各州广设书院，聘请名师，广招学子', cost:16, effect:{culture:+8,people:+4,stability:+3,prestige:+3}, result:{icon:'📚',title:'文教大兴',desc:'各州书院相继建立，名师云集，学子踊跃。吴越文化水平大幅提升，人才辈出，声望远播。',type:'good'} },
+      { label:'【重点建设】', text:'在杭州、越州等重要城市建立书院', cost:8, effect:{culture:+5,people:+2,stability:+1}, result:{icon:'🎓',title:'文化中心',desc:'杭州、越州书院建立，成为江南文化中心，吸引了大批文人学士。',type:'neutral'} },
+      { label:'【暂缓建设】', text:'以财政紧张为由，暂缓书院建设', cost:0, effect:{culture:-2,people:-1}, result:{icon:'😞',title:'文教滞后',desc:'书院建设推迟，吴越文化发展略显滞后。',type:'bad'} }
+    ]},
+  { id:'horse_trade', tag:'good', tagText:'军备', title:'北方马商来访',
+    scene:'一支来自北方的马商队抵达杭州，带来了数百匹优良战马，愿意以丝绸换取。',
+    desc:'吴越地处江南，战马稀缺，一直是军事上的短板。此次马商来访，是补充骑兵力量的良机。',
+    advisor:'wu_yanfu', advisorText:'大王，战马乃骑兵之本！吴越骑兵一直是弱项，若能购入这批战马，骑兵战力将大为提升！末将强烈建议购买！',
+    choices:[
+      { label:'【大量购入】', text:'以重金购入全部战马，大力发展骑兵', cost:18, effect:{military:+7,defense:+2,people:-1}, result:{icon:'🐴',title:'骑兵大振',desc:'大批战马购入，吴越骑兵力量大为增强。南唐探子将消息传回，南唐将领对吴越骑兵刮目相看。',type:'good'} },
+      { label:'【适量购入】', text:'购入部分战马，补充骑兵力量', cost:8, effect:{military:+4,defense:+1}, result:{icon:'🐎',title:'骑兵补充',desc:'购入部分战马，骑兵力量有所增强。',type:'neutral'} },
+      { label:'【婉言谢绝】', text:'以价格过高为由，婉拒购马', cost:0, effect:{military:-1}, result:{icon:'😞',title:'错失良机',desc:'吴越错失了补充战马的良机，骑兵力量依然薄弱。',type:'bad'} }
+    ]},
+  { id:'salt_monopoly', tag:'normal', tagText:'盐政', title:'盐政改革',
+    scene:'两浙转运使钱惟治上奏，建议改革盐政，实行官营专卖，以增加国库收入。',
+    desc:'盐是百姓生活必需品，盐政改革关系到国库收入和百姓生活。如何改革，需要慎重考虑。',
+    advisor:'qian_weizhi', advisorText:'大王，盐政改革是增加国库收入的重要手段。若实行官营专卖，每年可增加收入数十万贯。但需注意不可过度加重百姓负担。',
+    choices:[
+      { label:'【官营专卖】', text:'实行盐政官营专卖，严格管控盐价', cost:5, effect:{treasury:+8,commerce:+3,people:-3}, result:{icon:'🧂',title:'盐政改革',desc:'盐政官营专卖实施，国库收入大幅增加。但盐价略有上涨，百姓略有怨言。',type:'neutral'} },
+      { label:'【适度管控】', text:'加强盐政管理，打击私盐，但不实行完全专卖', cost:3, effect:{treasury:+4,commerce:+2,people:+1}, result:{icon:'⚖️',title:'盐政整顿',desc:'盐政整顿有效，私盐减少，国库收入增加，百姓负担未加重。',type:'good'} },
+      { label:'【放开盐市】', text:'放开盐市，让商人自由经营，收取商税', cost:0, effect:{commerce:+5,treasury:+2,people:+3}, result:{icon:'🏪',title:'盐市繁荣',desc:'盐市放开，商人踊跃经营，盐价下降，百姓受益，商税收入也有所增加。',type:'good'} }
+    ]},
+  { id:'qian_liu_legacy', tag:'good', tagText:'先王', title:'先王遗泽',
+    scene:'今日是先王钱镠的忌日，朝臣建议举行隆重的祭祀典礼，以彰显王室正统。',
+    desc:'钱镠是吴越国的开创者，其"保境安民"的国策奠定了吴越的基础。举行隆重祭祀，有助于凝聚人心，彰显王室正统。',
+    advisor:'cao_zhongda', advisorText:'大王，先王钱镠开创吴越，功勋卓著。今日忌日，举行隆重祭祀，不仅是对先王的尊重，更能凝聚人心，彰显大王的孝道与正统。',
+    choices:[
+      { label:'【隆重祭祀】', text:'举行盛大祭祀典礼，广邀朝臣百姓参与', cost:10, effect:{people:+5,culture:+4,stability:+3,prestige:+3}, result:{icon:'🏛️',title:'先王庇佑',desc:'祭祀典礼盛况空前，百姓感念先王恩德，对大王的孝道赞不绝口。吴越上下凝心聚力，士气大振。',type:'good'} },
+      { label:'【简单祭祀】', text:'举行简单祭祀，不铺张浪费', cost:3, effect:{people:+2,culture:+2,stability:+1}, result:{icon:'🙏',title:'祭祀完成',desc:'祭祀典礼顺利举行，朝野对大王的孝道表示认可。',type:'neutral'} },
+      { label:'【取消祭祀】', text:'以政务繁忙为由，取消祭祀典礼', cost:0, effect:{people:-4,culture:-3,stability:-2}, result:{icon:'😤',title:'朝野失望',desc:'取消祭祀令朝野大失所望，认为大王不孝，有损王室声誉。',type:'bad'} }
+    ]},
+  { id:'iron_smelting', tag:'good', tagText:'工业', title:'铁器冶炼改进',
+    scene:'处州矿场来报，工匠发明了新式冶铁技术，可大幅提高铁器质量和产量。',
+    desc:'铁器是农业生产和军事装备的重要材料。若能推广新式冶铁技术，将大大提升吴越的农业和军事实力。',
+    advisor:'wu_chengyi', advisorText:'大王，新式冶铁技术效果惊人！不仅铁器质量大幅提升，产量也增加了一倍。若能在全国推广，农具和兵器都将大为改善！',
+    choices:[
+      { label:'【大力推广】', text:'拨款推广新式冶铁技术，扩大铁器生产', cost:12, effect:{military:+5,agri:+4,commerce:+3,people:+2}, result:{icon:'⚒️',title:'冶铁革新',desc:'新式冶铁技术在全国推广，铁器质量和产量大幅提升。农具改良，粮食产量增加；兵器精良，军队战力提升。',type:'good'} },
+      { label:'【试点推广】', text:'先在处州试点，观察效果后再决定是否全面推广', cost:5, effect:{military:+2,agri:+2,commerce:+1}, result:{icon:'🔬',title:'稳步推进',desc:'试点效果良好，新式冶铁技术逐步推广。',type:'neutral'} },
+      { label:'【不予采纳】', text:'认为此乃奇技淫巧，不予采纳', cost:0, effect:{military:-2,agri:-1}, result:{icon:'❌',title:'因循守旧',desc:'吴越错失了提升冶铁技术的良机。',type:'bad'} }
+    ]},
+  { id:'tea_culture', tag:'good', tagText:'茶事', title:'茶道兴盛',
+    scene:'台州茶农来报，今年茶叶大丰收，品质极佳，已有商人愿以重金购买，远销各地。',
+    desc:'吴越茶叶享誉天下，是重要的出口商品。若能大力发展茶业，将大大增加国库收入和文化声望。',
+    advisor:'lin_deyuan', advisorText:'大王，吴越茶叶天下闻名！若能举办茶道盛会，邀请各国使节品茗，不仅能增加收入，更能提升吴越的文化声望！',
+    choices:[
+      { label:'【举办茶道盛会】', text:'举办盛大茶道盛会，邀请各国使节，展示吴越茶文化', cost:8, effect:{culture:+6,diplomacy:+5,commerce:+4,people:+2}, result:{icon:'🍵',title:'茶道名扬天下',desc:'茶道盛会盛况空前，各国使节赞不绝口。吴越茶文化名扬天下，商贸往来更加频繁。',type:'good'} },
+      { label:'【扶持茶业】', text:'拨款扶持茶业发展，开辟更多茶叶商路', cost:5, effect:{commerce:+5,culture:+2,diplomacy:+2}, result:{icon:'🌿',title:'茶业兴旺',desc:'茶业得到扶持，产量和质量均有提升，商贸收入增加。',type:'neutral'} },
+      { label:'【征收重税】', text:'趁机大幅提高茶叶税，充实国库', cost:0, effect:{commerce:-2,people:-3,treasury:+8}, result:{icon:'💸',title:'茶农怨声',desc:'重税令茶农怨声载道，部分茶农减少种植，长远来看损害了茶业发展。',type:'bad'} }
+    ]},
+  { id:'zhou_north_expedition', tag:'crisis', tagText:'时局', title:'后周北伐契丹',
+    scene:'细作来报：后周柴荣亲率大军北伐契丹，意图收复燕云十六州，天下局势骤然紧张。',
+    desc:'后周北伐是五代十国的重大事件。吴越虽远离战场，但后周的强大令人忧虑。如何应对这一局势？',
+    advisor:'shen_chongyi', advisorText:'大王，后周北伐，天下震动。吴越虽不在战场，但后周若胜，其国力将更加强盛，对吴越的压力也将增大。臣建议趁此机会，加强自身实力。',
+    choices:[
+      { label:'【遣使助威】', text:'遣使后周，表示支持，并提供部分军粮', cost:12, effect:{diplomacy:+8,prestige:+4,treasury:-5}, result:{icon:'🏮',title:'宗主嘉奖',desc:'后周柴荣对吴越的支持大为满意，赐予吴越王更高封号。吴越在后周庇护下更加安全。',type:'good'} },
+      { label:'【静观其变】', text:'静观后周北伐结果，不作表态', cost:0, effect:{stability:+2,diplomacy:-2}, result:{icon:'📜',title:'静观其变',desc:'吴越静观其变，保持中立。后周北伐结果将影响天下格局。',type:'neutral'} },
+      { label:'【趁机扩张】', text:'趁后周北伐之机，向南扩张势力范围', cost:15, effect:{military:+4,prestige:+3,diplomacy:-6}, result:{icon:'⚔️',title:'趁火打劫',desc:'吴越趁后周北伐之机扩张，虽有所收获，但引起了后周的不满，外交关系趋于紧张。',type:'neutral'} }
+    ]},
+  { id:'water_conservancy', tag:'good', tagText:'水利', title:'兴修水利',
+    scene:'农政官员上奏，建议在越州、湖州等地兴修水利，扩大灌溉面积，提高粮食产量。',
+    desc:'吴越地处江南水乡，水利建设是农业发展的关键。若能大力兴修水利，将大大提升粮食产量。',
+    advisor:'wu_chengyi', advisorText:'大王，水利乃农业之本！越州、湖州水网密布，若能兴修水利，扩大灌溉面积，粮食产量将大幅提升，百姓生活也将更加富裕！',
+    choices:[
+      { label:'【大规模兴修】', text:'拨重金在各州大规模兴修水利', cost:20, effect:{agri:+8,people:+5,stability:+3,population:+10}, result:{icon:'🌊',title:'水利大兴',desc:'各州水利工程相继完工，灌溉面积大幅扩大，粮食产量大增。百姓生活改善，民心大振。',type:'good'} },
+      { label:'【重点兴修】', text:'在越州、湖州等重要农业区重点兴修水利', cost:10, effect:{agri:+5,people:+3,stability:+1}, result:{icon:'🏗️',title:'水利改善',desc:'重点地区水利工程完工，粮食产量有所提升。',type:'neutral'} },
+      { label:'【暂缓建设】', text:'以财政紧张为由，暂缓水利建设', cost:0, effect:{agri:-2,people:-2}, result:{icon:'😞',title:'农业滞后',desc:'水利建设推迟，农业发展略显滞后。',type:'bad'} }
+    ]},
+  { id:'pirate_alliance', tag:'crisis', tagText:'海患', title:'海寇联盟',
+    scene:'明州水师来报，东海多支海寇势力联合，组成了一支规模庞大的海寇联盟，对吴越沿海威胁极大。',
+    desc:'海寇联盟势力强大，已多次袭击吴越沿海，百姓苦不堪言。如何应对这一威胁？',
+    advisor:'ws_du', advisorText:'大王，海寇联盟势力强大，已非单支水师所能应对！末将请求大规模扩充水师，同时联络新罗、日本共同剿寇！',
+    choices:[
+      { label:'【大规模剿寇】', text:'扩充水师，联络新罗、日本，大规模剿灭海寇联盟', cost:25, effect:{military:+8,diplomacy:+5,people:+6,commerce:+4}, result:{icon:'⛵',title:'海清河晏',desc:'吴越水师联合新罗、日本，大规模剿灭海寇联盟。东海从此清平，商船往来无阻，吴越海上声威大振。',type:'good'} },
+      { label:'【招安首领】', text:'派人招安海寇联盟首领，许以官职，化敌为友', cost:10, effect:{military:+5,diplomacy:+3,people:+3}, result:{icon:'🤝',title:'化敌为友',desc:'海寇联盟首领接受招安，率部归顺。这支强大的水上力量成为吴越水师的重要补充。',type:'good'} },
+      { label:'【坚壁清野】', text:'命沿海百姓内迁，放弃沿海地区，以避海寇锋芒', cost:5, effect:{people:-10,military:-3,commerce:-5}, result:{icon:'😢',title:'百姓流离',desc:'沿海百姓被迫内迁，失去家园，怨声载道。海寇更加猖獗，商贸大受影响。',type:'bad'} }
+    ]},
+  { id:'astronomy_calendar', tag:'good', tagText:'历法', title:'历法修订',
+    scene:'翰林学士上奏，现行历法已有误差，建议召集天文学家重新修订历法，以利农业生产。',
+    desc:'准确的历法对农业生产至关重要。若能修订历法，将大大提升农业生产效率。',
+    advisor:'lin_deyuan', advisorText:'大王，历法乃农业之本！现行历法误差已影响农时，若能修订，农民将能更准确地把握农时，粮食产量必将提升！',
+    choices:[
+      { label:'【召集修订】', text:'召集天文学家，拨款修订历法', cost:8, effect:{agri:+4,culture:+5,people:+3,stability:+2}, result:{icon:'🌙',title:'历法精准',desc:'新历法修订完成，农民能更准确地把握农时，粮食产量有所提升。吴越文化声望也因此提升。',type:'good'} },
+      { label:'【沿用旧历】', text:'认为旧历法尚可，不作修订', cost:0, effect:{agri:-1}, result:{icon:'📅',title:'沿用旧历',desc:'旧历法继续使用，农业生产略受影响。',type:'neutral'} }
+    ]},
+  { id:'refugee_influx', tag:'urgent', tagText:'流民', title:'中原流民涌入',
+    scene:'中原战乱，大批流民涌入吴越，其中不乏工匠、文人和农民，但也有部分流氓无赖混入其中。',
+    desc:'流民涌入是双刃剑。处置得当，可以增加人口和人才；处置不当，则可能引发社会动荡。',
+    advisor:'cao_zhongda', advisorText:'大王，中原流民涌入，其中不乏人才。若能妥善安置，不仅能增加人口，更能引进中原先进技术和文化。臣建议大王广开门路，善加利用。',
+    choices:[
+      { label:'【广纳流民】', text:'广开门路，妥善安置流民，给予土地和工具', cost:15, effect:{people:+5,agri:+4,culture:+4,population:+15}, result:{icon:'👥',title:'人口大增',desc:'大批流民得到妥善安置，其中不乏工匠、文人和农民。吴越人口大增，农业和文化均有提升。',type:'good'} },
+      { label:'【择优录用】', text:'对流民进行筛选，只接收有技能的工匠和文人', cost:8, effect:{culture:+5,agri:+2,people:+2,population:+8}, result:{icon:'🎓',title:'人才引进',desc:'经过筛选，一批有技能的工匠和文人进入吴越，为吴越的发展贡献力量。',type:'neutral'} },
+      { label:'【拒绝入境】', text:'以安全为由，拒绝流民入境', cost:0, effect:{people:-3,culture:-2,stability:+2}, result:{icon:'🚫',title:'拒绝流民',desc:'流民被拒于境外，吴越社会稳定，但错失了引进人才的良机。',type:'bad'} }
+    ]},
+  { id:'nantang_hostage', tag:'diplomacy', tagText:'外交', title:'南唐质子之议',
+    scene:'南唐使者来访，提议两国互换质子，以示友好，共同应对后周压力。',
+    desc:'互换质子是古代外交的重要手段，可以增强两国互信。但将王室子弟送往他国，也存在一定风险。',
+    advisor:'shen_chongyi', advisorText:'大王，互换质子是增强两国互信的重要手段。若能与南唐建立更紧密的关系，对吴越的安全大有裨益。但需慎重考虑，以免王室子弟受到威胁。',
+    choices:[
+      { label:'【欣然接受】', text:'接受互换质子提议，派遣王室子弟赴南唐', cost:0, effect:{diplomacy:+10,stability:+3,prestige:+2}, result:{icon:'🤝',title:'质子互换',desc:'两国互换质子，关系大为改善。南唐暂时放弃了对吴越的军事威胁，边境趋于平静。',type:'good'} },
+      { label:'【婉言谢绝】', text:'以王室子弟年幼为由，婉拒互换质子', cost:0, effect:{diplomacy:-3,stability:+1}, result:{icon:'📜',title:'婉拒提议',desc:'吴越婉拒了互换质子的提议，南唐略有不满，但双方关系未破裂。',type:'neutral'} },
+      { label:'【提出条件】', text:'接受互换质子，但要求南唐先归还边境争议土地', cost:0, effect:{diplomacy:-5,prestige:+3,military:+2}, result:{icon:'⚠️',title:'强硬谈判',desc:'吴越提出苛刻条件，南唐使者愤而离去，两国关系趋于紧张。',type:'bad'} }
+    ]},
+  { id:'earthquake', tag:'urgent', tagText:'天灾', title:'越州地震',
+    scene:'越州急报：当地发生强烈地震，城墙倒塌，民房损毁，伤亡惨重。',
+    desc:'越州地震造成重大损失，需要大量资金和人力进行救灾和重建。如何应对这一突发灾害？',
+    advisor:'wu_chengyi', advisorText:'大王，越州地震，灾情惨重！臣请大王立即拨款救灾，同时派遣官员赴越州督导重建工作，以安民心！',
+    choices:[
+      { label:'【全力救灾】', text:'立即拨款救灾，派遣官员督导，全力重建', cost:20, effect:{people:+6,stability:+3,culture:+2,defense:-3}, result:{icon:'🏗️',title:'重建家园',desc:'大王全力救灾，越州百姓得到妥善安置，重建工作有序推进。百姓感念大王仁德，民心大振。',type:'good'} },
+      { label:'【应急救援】', text:'拨款应急救援，但重建工作由地方自行负责', cost:10, effect:{people:+3,stability:+1,defense:-2}, result:{icon:'🚑',title:'应急救援',desc:'应急救援及时，伤亡减少。但重建工作进展缓慢，部分百姓对朝廷的支持力度不满。',type:'neutral'} },
+      { label:'【地方自救】', text:'命地方自行救灾，朝廷不作大规模干预', cost:0, effect:{people:-8,stability:-4,defense:-5}, result:{icon:'💀',title:'救灾不力',desc:'朝廷救灾不力，越州百姓死伤惨重，民间怨声载道。',type:'bad'} }
+    ]},
+  { id:'printing_tech', tag:'good', tagText:'技艺', title:'雕版印刷推广',
+    scene:'翰林院来报，雕版印刷技术已趋于成熟，若能大力推广，将大大降低书籍成本，促进文化传播。',
+    desc:'雕版印刷是文化传播的重要工具。若能大力推广，将大大提升吴越的文化水平和声望。',
+    advisor:'lin_deyuan', advisorText:'大王，雕版印刷乃文化传播之利器！若能大力推广，书籍成本将大幅降低，更多百姓能够读书识字，吴越文化必将大放异彩！',
+    choices:[
+      { label:'【大力推广】', text:'拨款推广雕版印刷，建立官方印刷坊，广印书籍', cost:10, effect:{culture:+8,people:+4,stability:+2,prestige:+3}, result:{icon:'📖',title:'文化大兴',desc:'雕版印刷大力推广，书籍成本大幅降低，更多百姓能够读书识字。吴越文化水平大幅提升，声望远播。',type:'good'} },
+      { label:'【适度推广】', text:'建立小型印刷坊，适度推广', cost:5, effect:{culture:+4,people:+2,stability:+1}, result:{icon:'📚',title:'文化提升',desc:'印刷坊建立，书籍传播有所改善。',type:'neutral'} },
+      { label:'【不予推广】', text:'认为此举会动摇传统，不予推广', cost:0, effect:{culture:-3,people:-1}, result:{icon:'❌',title:'因循守旧',desc:'吴越错失了推广印刷技术的良机，文化发展略显滞后。',type:'bad'} }
+    ]},
+  { id:'border_dispute', tag:'crisis', tagText:'边境', title:'边境争议',
+    scene:'湖州边境守备来报，南唐军队越境侵占了数处村庄，当地百姓被迫迁离，局势紧张。',
+    desc:'南唐越境侵占是严重的外交事件。如何应对，将影响两国关系和吴越的领土完整。',
+    advisor:'wu_yanfu', advisorText:'大王！南唐越境侵占，是对吴越主权的严重侵犯！末将请命，率兵驱逐南唐军队，捍卫吴越领土！',
+    choices:[
+      { label:'【强硬驱逐】', text:'出兵驱逐南唐军队，捍卫领土主权', cost:12, effect:{military:+4,prestige:+5,diplomacy:-6,people:+3}, result:{icon:'⚔️',title:'捍卫主权',desc:'吴越出兵驱逐南唐军队，成功收复被占村庄。百姓拍手称快，大王捍卫主权的决心令南唐刮目相看。',type:'good'} },
+      { label:'【外交交涉】', text:'通过外交途径，要求南唐撤军', cost:5, effect:{diplomacy:+3,prestige:-2,military:+1}, result:{icon:'📜',title:'外交交涉',desc:'经过外交交涉，南唐同意撤军，但态度傲慢，令吴越颜面略损。',type:'neutral'} },
+      { label:'【忍让退步】', text:'以大局为重，忍让退步，不与南唐正面冲突', cost:0, effect:{diplomacy:+2,prestige:-6,people:-5,military:-2}, result:{icon:'😔',title:'忍辱退步',desc:'吴越忍让退步，南唐得寸进尺，边境局势更加不稳。百姓对大王的软弱颇有怨言。',type:'bad'} }
+    ]},
+  { id:'new_year_festival', tag:'good', tagText:'节庆', title:'新年大典',
+    scene:'新年将至，朝臣建议举行盛大的新年庆典，与民同乐，彰显吴越的繁荣昌盛。',
+    desc:'新年庆典是凝聚人心的重要时机。举行盛大庆典，可以提振民心，彰显国力。',
+    advisor:'cao_zhongda', advisorText:'大王，新年庆典是与民同乐的好时机！若能举行盛大庆典，百姓必将感念大王恩德，民心大振！',
+    choices:[
+      { label:'【盛大庆典】', text:'举行盛大新年庆典，广邀百姓参与，大赦天下', cost:12, effect:{people:+7,culture:+4,stability:+3,prestige:+3}, result:{icon:'🎉',title:'普天同庆',desc:'新年庆典盛况空前，大王大赦天下，百姓欢欣鼓舞。吴越上下喜气洋洋，民心大振。',type:'good'} },
+      { label:'【简单庆典】', text:'举行简单庆典，不铺张浪费', cost:5, effect:{people:+3,culture:+2,stability:+1}, result:{icon:'🎊',title:'庆典顺利',desc:'新年庆典顺利举行，百姓对大王的节俭表示赞许。',type:'neutral'} },
+      { label:'【取消庆典】', text:'以国库紧张为由，取消新年庆典', cost:0, effect:{people:-4,culture:-2,stability:-2}, result:{icon:'😞',title:'百姓失望',desc:'取消庆典令百姓大失所望，民心略有下降。',type:'bad'} }
     ]}
 ];
 
@@ -1302,7 +1544,10 @@ function calcAnnualTax(){
     const popFactor = Math.max(0.5, p.population / 20);
     const devFactor = 0.5 + (p.development||60) / 100;
     const corrFactor = 1 - G.corruption;
-    const tax = Math.round(p.tax * popFactor * devFactor * corrFactor * rateCfg.mult);
+    // A项：各州独立税率乘数
+    const prefTaxRate = G.prefTaxRates ? (G.prefTaxRates[p.id] || 'normal') : 'normal';
+    const prefTaxMult = (typeof PREF_TAX_CONFIG !== 'undefined') ? (PREF_TAX_CONFIG[prefTaxRate]?.taxMult || 1.0) : 1.0;
+    const tax = Math.round(p.tax * popFactor * devFactor * corrFactor * rateCfg.mult * prefTaxMult);
     totalTax += tax;
     details.push({ name: p.name, tax });
   });
@@ -1732,6 +1977,25 @@ function renderMilitaryDetail(){
       <div class="syd-warn-title">🕵️ 细作任务 <button onclick="openSpyModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(155,89,182,0.15);border:1px solid rgba(155,89,182,0.3);border-radius:4px;color:#9b59b6;cursor:pointer">+ 派遣细作</button></div>
       ${spyHtml}
     </div>
+    ${(()=>{
+      const occupied = G.warOccupied || [];
+      if(occupied.length === 0) return '';
+      const nationNames = { nantang:'南唐', zhou:'后周', min:'闽国', nan_han:'南汉', chu:'楚国' };
+      const items = occupied.map(occ=>{
+        const pref = PREFECTURES.find(p=>p.id===occ.prefId);
+        const stabColor = occ.stability>=60?'#2ecc71':occ.stability>=35?'#f39c12':'#e74c3c';
+        const fromName = nationNames[occ.fromNation] || occ.fromNation;
+        return `<div class="syd-warn-item" style="color:${stabColor}">
+          🏴 <b>${occ.name}</b>（原属${fromName}）稳定度${occ.stability}/100
+          ${pref?`· 民心${pref.morale} · 驻军${pref.troops}千`:''}
+          <span style="font-size:9px;color:var(--text-muted)">第${occ.turnOccupied}年占领，稳定度≥80后完全融入</span>
+        </div>`;
+      }).join('');
+      return `<div class="syd-warn-section">
+        <div class="syd-warn-title">🏴 占领地区 <span style="font-size:10px;color:var(--text-muted)">（${occupied.length}处，每年稳定度+5）</span></div>
+        ${items}
+      </div>`;
+    })()}
     <div class="mil-unit-list">${cards}</div>
   </div>`;
 }
@@ -1781,12 +2045,18 @@ function renderEconomyDetail(){
   const rows = PREFECTURES.map(p => {
     const taxPct = Math.round(p.tax/maxTax*100);
     const devColor = p.development>=75?'#2ecc71':p.development>=50?'#f39c12':'#e74c3c';
+    const taxRate = G.prefTaxRates[p.id]||'normal';
+    const taxMult = PREF_TAX_CONFIG[taxRate].taxMult;
+    const actualTax = Math.round(p.tax * taxMult);
+    const taxColor = taxRate==='low'?'#2ecc71':taxRate==='high'?'#e74c3c':'#c9a84c';
+    const taxRateLabel = PREF_TAX_CONFIG[taxRate].label;
     return `<div class="syd-econ-row">
       <div class="syd-econ-name">${p.emoji} ${p.name}</div>
       <div class="syd-econ-bar-wrap"><div class="syd-bar" style="width:${taxPct}%;background:#c9a84c;height:8px"></div></div>
-      <div class="syd-econ-tax">${p.tax}万贯</div>
+      <div class="syd-econ-tax" style="color:${taxColor}" title="${taxRateLabel}税率×${taxMult}">${actualTax}万贯</div>
       <div class="syd-econ-grain">🌾${p.grain}</div>
       <div class="syd-econ-dev" style="color:${devColor}">${p.development}%</div>
+      <button onclick="openPrefDetailModal('${p.id}')" style="font-size:9px;padding:1px 5px;background:rgba(52,152,219,0.15);border:1px solid rgba(52,152,219,0.3);border-radius:3px;color:#3498db;cursor:pointer;white-space:nowrap">治理</button>
     </div>`;
   }).join('');
 
@@ -1799,7 +2069,7 @@ function renderEconomyDetail(){
       <div class="syd-summary-item"><div class="syd-summary-val">${G.stats.treasury}</div><div class="syd-summary-key">国库指数</div></div>
     </div>
     <div class="syd-econ-header-row">
-      <span>州郡</span><span>税收</span><span></span><span>粮食</span><span>开发</span>
+      <span>州郡</span><span>税收</span><span></span><span>粮食</span><span>开发</span><span></span>
     </div>
     <div class="syd-econ-list">${rows}</div>
   </div>`;
@@ -1886,6 +2156,39 @@ function renderZhengwuDetail(){
     </div>
 
     <div class="syd-warn-section">
+      <div class="syd-warn-title">🔬 科技研发 <button onclick="openTechTreeModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(52,152,219,0.15);border:1px solid rgba(52,152,219,0.3);border-radius:4px;color:#3498db;cursor:pointer">打开研发树</button></div>
+      ${(()=>{
+        if(G.techInProgress){
+          const allNodes=Object.values(TECH_TREE).flatMap(b=>b.nodes);
+          const node=allNodes.find(n=>n.id===G.techInProgress.techId);
+          return `<div class="syd-warn-none" style="color:#3498db">🔬 研发中：${node?node.name:'未知'}（剩余${G.techInProgress.turnsLeft}年）</div>`;
+        }
+        const doneCount=Object.keys(G.techs||{}).length;
+        const totalCount=Object.values(TECH_TREE).flatMap(b=>b.nodes).length;
+        return `<div class="syd-warn-none">已研发${doneCount}/${totalCount}项科技，点击打开研发树选择研发方向</div>`;
+      })()}
+    </div>
+
+    <div class="syd-warn-section">
+      <div class="syd-warn-title">🏛️ 朝中派系 <span style="font-size:10px;color:var(--text-muted)">（影响政局稳定）</span></div>
+      ${(()=>{
+        const f=G.factions||{civil:50,military:50,clan:50};
+        const factionNames={civil:'文官派',military:'武将派',clan:'宗室派'};
+        const factionColors={civil:'#3498db',military:'#e74c3c',clan:'#c9a84c'};
+        return Object.entries(f).map(([k,v])=>{
+          const c=factionColors[k]||'#aaa';
+          return `<div style="display:flex;align-items:center;gap:6px;margin:3px 0">
+            <div style="width:50px;font-size:10px;color:${c}">${factionNames[k]||k}</div>
+            <div style="flex:1;background:rgba(255,255,255,0.08);border-radius:3px;height:6px">
+              <div style="width:${v}%;background:${c};height:6px;border-radius:3px"></div>
+            </div>
+            <div style="width:24px;font-size:10px;color:${c};text-align:right">${v}</div>
+          </div>`;
+        }).join('');
+      })()}
+    </div>
+
+    <div class="syd-warn-section">
       <div class="syd-warn-title">👑 王室继承 <button onclick="openHeirModal()" style="font-size:10px;padding:2px 6px;margin-left:6px;background:rgba(201,168,76,0.15);border:1px solid rgba(201,168,76,0.3);border-radius:4px;color:#c9a84c;cursor:pointer">查看子嗣</button></div>
       ${(()=>{
         if(!G.heirs || G.heirs.length===0) return '<div class="syd-warn-item" style="color:#e74c3c">⚠ 大王尚无子嗣，储位悬空！</div>';
@@ -1906,11 +2209,14 @@ function renderMinshengDetail(){
 
   const moraleRows = PREFECTURES.map(p=>{
     const c = p.morale>=75?'#2ecc71':p.morale>=55?'#f39c12':'#e74c3c';
+    const taxRate = G.prefTaxRates[p.id]||'normal';
+    const taxIcon = taxRate==='low'?'🟢':taxRate==='high'?'🔴':'⚪';
     return `<div class="syd-econ-row">
       <div class="syd-econ-name">${p.emoji} ${p.name}</div>
       <div class="syd-econ-bar-wrap"><div class="syd-bar" style="width:${p.morale}%;background:${c};height:8px"></div></div>
       <div class="syd-econ-tax" style="color:${c}">${p.morale}</div>
-      <div class="syd-econ-grain">👥${p.population}万</div>
+      <div class="syd-econ-grain">${taxIcon}</div>
+      <button onclick="openPrefDetailModal('${p.id}')" style="font-size:9px;padding:1px 5px;background:rgba(52,152,219,0.15);border:1px solid rgba(52,152,219,0.3);border-radius:3px;color:#3498db;cursor:pointer;white-space:nowrap">详情</button>
     </div>`;
   }).join('');
 
@@ -2049,6 +2355,12 @@ function doAction(id){
     openBudgetActionModal(id, (spent, official)=>{
       openSuePeaceModal();
     });
+    return;
+  }
+
+  // 科技研发树——直接打开弹窗，无需预算弹窗
+  if(id==='tech_tree'){
+    openTechTreeModal();
     return;
   }
 
@@ -2838,6 +3150,455 @@ function confirmAnnualMeeting(){
   _doEndYear();
 }
 
+// ===================================================
+//  本轮C项：科技研发树
+// ===================================================
+const TECH_TREE = {
+  agri: {
+    label:'农业', icon:'🌾', color:'#2ecc71',
+    nodes: [
+      { id:'agri_1', name:'精耕细作', cost:15, turns:2, requires:[], effects:{agri:+5,population:+5}, desc:'推广精耕细作技术，提升土地利用率，粮食产量永久+5%。' },
+      { id:'agri_2', name:'水利灌溉', cost:20, turns:3, requires:['agri_1'], effects:{agri:+8,people:+3}, desc:'大规模兴修水利，旱涝保收，农业产值永久提升。' },
+      { id:'agri_3', name:'良种培育', cost:25, turns:3, requires:['agri_2'], effects:{agri:+10,grain:+50}, desc:'培育优良稻种，亩产大幅提升，粮食储备永久增加。' },
+      { id:'agri_4', name:'农具革新', cost:30, turns:4, requires:['agri_3'], effects:{agri:+12,people:+5,commerce:+3}, desc:'推广新式农具，劳动效率倍增，农业全面腾飞。' },
+    ]
+  },
+  military: {
+    label:'军事', icon:'⚔️', color:'#e74c3c',
+    nodes: [
+      { id:'mil_1', name:'阵法操练', cost:15, turns:2, requires:[], effects:{military:+5,defense:+3}, desc:'系统训练军队阵法，协同作战能力大幅提升。' },
+      { id:'mil_2', name:'强弓硬弩', cost:20, turns:2, requires:['mil_1'], effects:{military:+7,defense:+4}, desc:'改良弓弩制造工艺，远程打击力大幅增强。' },
+      { id:'mil_3', name:'水战战术', cost:25, turns:3, requires:['mil_2'], effects:{military:+8,defense:+5}, desc:'系统研究水战战术，吴越水师战力跃升一个层次。' },
+      { id:'mil_4', name:'城防工事', cost:35, turns:4, requires:['mil_3'], effects:{military:+5,defense:+15}, desc:'建立完善的城防体系，各州城防永久大幅提升。' },
+    ]
+  },
+  commerce: {
+    label:'商业', icon:'💰', color:'#c9a84c',
+    nodes: [
+      { id:'com_1', name:'市舶制度', cost:12, turns:2, requires:[], effects:{commerce:+6,diplomacy:+3}, desc:'完善市舶司制度，规范海外贸易，商税收入稳步增长。' },
+      { id:'com_2', name:'货币统一', cost:18, turns:2, requires:['com_1'], effects:{commerce:+8,stability:+3}, desc:'统一货币制度，促进商品流通，商业繁荣度大幅提升。' },
+      { id:'com_3', name:'海上丝路', cost:25, turns:3, requires:['com_2'], effects:{commerce:+10,diplomacy:+6}, desc:'开辟海上丝绸之路，与大食、新罗、日本建立稳定贸易关系。' },
+      { id:'com_4', name:'商业法典', cost:30, turns:3, requires:['com_3'], effects:{commerce:+12,stability:+5,people:+3}, desc:'制定完善的商业法典，保护商人权益，吴越成为天下商贸中心。' },
+    ]
+  },
+  culture: {
+    label:'文化', icon:'📜', color:'#9b59b6',
+    nodes: [
+      { id:'cul_1', name:'广设书院', cost:12, turns:2, requires:[], effects:{culture:+6,people:+3}, desc:'在各州广设书院，培养人才，文化水平稳步提升。' },
+      { id:'cul_2', name:'雕版印刷', cost:18, turns:2, requires:['cul_1'], effects:{culture:+8,stability:+2}, desc:'推广雕版印刷技术，书籍广泛传播，民智大开。' },
+      { id:'cul_3', name:'诗词盛世', cost:22, turns:3, requires:['cul_2'], effects:{culture:+10,diplomacy:+5,prestige:+5}, desc:'举办诗词盛会，广纳天下文人，吴越成为江南文化中心。' },
+      { id:'cul_4', name:'佛法弘扬', cost:28, turns:3, requires:['cul_3'], effects:{culture:+8,people:+6,stability:+5,prestige:+8}, desc:'大兴佛事，铸造阿育王塔，吴越佛教文化声望远播海外。' },
+    ]
+  }
+};
+
+// 打开科技研发弹窗
+function openTechTreeModal(){
+  const html = `
+    <div class="mil-modal-overlay" id="tech-tree-modal" onclick="if(event.target===this)closeMilModal('tech-tree-modal')">
+      <div class="mil-modal-box mil-modal-wide" style="max-width:680px">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">🔬</span>
+          <div>
+            <div class="mil-modal-title">科技研发树</div>
+            <div class="mil-modal-sub">投入资金研发科技，获得永久加成。每次只能研发一项。</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('tech-tree-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body" style="max-height:500px;overflow-y:auto">
+          ${_renderTechTreeContent()}
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('tech-tree-modal')">关闭</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function _renderTechTreeContent(){
+  const inProgress = G.techInProgress;
+  let html = '';
+  if(inProgress){
+    const allNodes = Object.values(TECH_TREE).flatMap(b=>b.nodes);
+    const node = allNodes.find(n=>n.id===inProgress.techId);
+    html += `<div style="background:rgba(52,152,219,0.15);border:1px solid rgba(52,152,219,0.4);border-radius:6px;padding:10px;margin-bottom:12px;font-size:12px">
+      🔬 <b>研发中：${node?node.name:'未知'}</b>（剩余${inProgress.turnsLeft}年完成）
+    </div>`;
+  }
+  for(const [branchId, branch] of Object.entries(TECH_TREE)){
+    html += `<div style="margin-bottom:16px">
+      <div style="color:${branch.color};font-weight:700;font-size:13px;margin-bottom:8px">${branch.icon} ${branch.label}科技线</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">`;
+    for(const node of branch.nodes){
+      const done = G.techs[node.id];
+      const reqMet = node.requires.every(r=>G.techs[r]);
+      const isInProg = inProgress && inProgress.techId === node.id;
+      const canResearch = !done && !isInProg && reqMet && !inProgress;
+      const affordable = G.budget - G.budgetUsed >= node.cost;
+      const effectStr = Object.entries(node.effects).map(([k,v])=>`${getStatName(k)}${v>0?'+':''}${v}`).join(' ');
+      const bgColor = done?'rgba(46,204,113,0.15)':isInProg?'rgba(52,152,219,0.15)':reqMet?'rgba(0,0,0,0.2)':'rgba(0,0,0,0.1)';
+      const borderColor = done?'#2ecc71':isInProg?'#3498db':reqMet?branch.color:'rgba(255,255,255,0.1)';
+      const opacity = (!done && !reqMet)?'0.5':'1';
+      html += `<div style="background:${bgColor};border:1px solid ${borderColor};border-radius:6px;padding:8px;width:140px;opacity:${opacity}">
+        <div style="font-weight:600;font-size:12px;color:${done?'#2ecc71':isInProg?'#3498db':branch.color}">${done?'✅ ':''}${isInProg?'🔬 ':''}${node.name}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin:3px 0">${node.desc}</div>
+        <div style="font-size:10px;color:#c9a84c;margin-bottom:4px">${effectStr}</div>
+        <div style="font-size:10px;color:var(--text-muted)">花费${node.cost}万贯 · ${node.turns}年</div>
+        ${canResearch && affordable ? `<button onclick="startTechResearch('${node.id}')" style="margin-top:4px;width:100%;padding:3px;font-size:10px;background:rgba(201,168,76,0.2);border:1px solid rgba(201,168,76,0.4);border-radius:4px;color:#c9a84c;cursor:pointer">开始研发</button>` : ''}
+        ${canResearch && !affordable ? `<div style="margin-top:4px;font-size:10px;color:#e74c3c">预算不足(需${node.cost}万贯)</div>` : ''}
+        ${done ? `<div style="margin-top:4px;font-size:10px;color:#2ecc71">已研发完成</div>` : ''}
+        ${isInProg ? `<div style="margin-top:4px;font-size:10px;color:#3498db">研发中…</div>` : ''}
+        ${!reqMet && !done ? `<div style="margin-top:4px;font-size:10px;color:var(--text-muted)">需先研发前置</div>` : ''}
+      </div>`;
+    }
+    html += `</div></div>`;
+  }
+  return html;
+}
+
+function startTechResearch(techId){
+  const allNodes = Object.values(TECH_TREE).flatMap(b=>b.nodes);
+  const node = allNodes.find(n=>n.id===techId);
+  if(!node){ showToast('科技节点不存在', 'warn'); return; }
+  if(G.techs[techId]){ showToast('该科技已研发完成', 'warn'); return; }
+  if(G.techInProgress){ showToast('已有科技在研发中，请等待完成', 'warn'); return; }
+  if(!node.requires.every(r=>G.techs[r])){ showToast('前置科技未完成', 'warn'); return; }
+  if(G.budget - G.budgetUsed < node.cost){ showToast(`预算不足，需要${node.cost}万贯`, 'warn'); return; }
+  spendBudget(node.cost);
+  G.techInProgress = { techId, turnsLeft: node.turns };
+  closeMilModal('tech-tree-modal');
+  addHistory(`🔬 开始研发科技：${node.name}，预计${node.turns}年后完成。`, 'good');
+  showResult({
+    icon:'🔬', title:'科技研发启动',
+    desc:`已投入${node.cost}万贯，开始研发「${node.name}」。${node.turns}年后研发完成，将永久获得：${Object.entries(node.effects).map(([k,v])=>`${getStatName(k)}${v>0?'+':''}${v}`).join('、')}。`,
+    effects:{}, type:'good'
+  }, ()=>showIdleState());
+}
+
+// 年度科技研发进度推进
+function _advanceTechResearch(){
+  if(!G.techInProgress) return;
+  G.techInProgress.turnsLeft--;
+  if(G.techInProgress.turnsLeft <= 0){
+    const allNodes = Object.values(TECH_TREE).flatMap(b=>b.nodes);
+    const node = allNodes.find(n=>n.id===G.techInProgress.techId);
+    if(node){
+      G.techs[node.id] = true;
+      applyEffects(node.effects);
+      addHistory(`✅ 科技研发完成：${node.name}！永久获得：${Object.entries(node.effects).map(([k,v])=>`${getStatName(k)}${v>0?'+':''}${v}`).join('、')}。`, 'good');
+      showToast(`🔬 科技「${node.name}」研发完成！`, 'info');
+    }
+    G.techInProgress = null;
+  }
+}
+
+// ===================================================
+//  本轮A项：州郡深度治理
+// ===================================================
+const PREF_TAX_CONFIG = {
+  low:    { label:'轻税', taxMult:0.7, moraleBonus:+5, devBonus:+1 },
+  normal: { label:'正常', taxMult:1.0, moraleBonus:0,  devBonus:0  },
+  high:   { label:'重税', taxMult:1.3, moraleBonus:-6, devBonus:-1 },
+};
+
+// 打开州郡详情弹窗
+function openPrefDetailModal(prefId){
+  const pref = PREFECTURES.find(p=>p.id===prefId);
+  if(!pref){ showToast('州郡不存在', 'warn'); return; }
+  const pop = G.prefPopulation[prefId] || pref.population || 20;
+  const taxRate = G.prefTaxRates[prefId] || 'normal';
+  const taxCfg = PREF_TAX_CONFIG[taxRate];
+  const irrigations = G.prefIrrigations[prefId] || 0;
+  const militia = G.prefMilitia[prefId] || 0;
+  const remaining = G.budget - G.budgetUsed;
+
+  const moraleColor = pref.morale>=75?'#2ecc71':pref.morale>=55?'#f39c12':'#e74c3c';
+  const defenseColor = pref.defense>=70?'#2ecc71':pref.defense>=45?'#f39c12':'#e74c3c';
+  const devColor = pref.development>=70?'#2ecc71':pref.development>=45?'#f39c12':'#e74c3c';
+
+  const taxBtns = Object.entries(PREF_TAX_CONFIG).map(([key,cfg])=>{
+    const active = taxRate===key;
+    const color = key==='low'?'#2ecc71':key==='normal'?'#c9a84c':'#e74c3c';
+    return `<button onclick="setPrefTaxRate('${prefId}','${key}')" style="flex:1;padding:5px 2px;font-size:11px;border-radius:5px;border:1px solid ${active?color:'rgba(255,255,255,0.15)'};background:${active?`${color}22`:'transparent'};color:${active?color:'var(--text-muted)'};cursor:pointer">${cfg.label}</button>`;
+  }).join('');
+
+  const govOff = pref.governor ? [...COURT_OFFICIALS,...CIVIL_OFFICIALS].find(o=>o.id===pref.governor) : null;
+  const govHtml = govOff
+    ? `<span style="color:#c9a84c">${govOff.name}（能力${govOff.ability}）</span>`
+    : `<span style="color:#e74c3c">⚠ 刺史空缺</span>`;
+
+  const html = `
+    <div class="mil-modal-overlay" id="pref-detail-modal" onclick="if(event.target===this)closeMilModal('pref-detail-modal')">
+      <div class="mil-modal-box mil-modal-wide" style="max-width:520px">
+        <div class="mil-modal-header">
+          <span class="mil-modal-icon">${pref.emoji}</span>
+          <div>
+            <div class="mil-modal-title">${pref.name} · ${pref.title}</div>
+            <div class="mil-modal-sub">${pref.desc}</div>
+          </div>
+          <button class="mil-modal-close" onclick="closeMilModal('pref-detail-modal')">✕</button>
+        </div>
+        <div class="mil-modal-body">
+          <!-- 基础数据 -->
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px">
+            <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:6px;padding:8px">
+              <div style="font-size:18px;font-weight:700;color:#3498db">${pop}</div>
+              <div style="font-size:10px;color:var(--text-muted)">人口(万)</div>
+            </div>
+            <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:6px;padding:8px">
+              <div style="font-size:18px;font-weight:700;color:${moraleColor}">${pref.morale}</div>
+              <div style="font-size:10px;color:var(--text-muted)">民心</div>
+            </div>
+            <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:6px;padding:8px">
+              <div style="font-size:18px;font-weight:700;color:${defenseColor}">${pref.defense}</div>
+              <div style="font-size:10px;color:var(--text-muted)">城防</div>
+            </div>
+            <div style="text-align:center;background:rgba(0,0,0,0.2);border-radius:6px;padding:8px">
+              <div style="font-size:18px;font-weight:700;color:${devColor}">${pref.development}</div>
+              <div style="font-size:10px;color:var(--text-muted)">开发度</div>
+            </div>
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+            驻军：<b style="color:#e74c3c">${pref.troops}千人</b> &nbsp;|&nbsp;
+            粮食：<b style="color:#2ecc71">${pref.grain}万石</b> &nbsp;|&nbsp;
+            税收：<b style="color:#c9a84c">${pref.tax}万贯/年</b> &nbsp;|&nbsp;
+            刺史：${govHtml}
+          </div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:12px">
+            特产：${pref.specialty} &nbsp;|&nbsp; 设施：${(pref.buildings||[]).join('、')}
+          </div>
+
+          <!-- 税率调整 -->
+          <div style="background:rgba(0,0,0,0.15);border-radius:6px;padding:10px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:600;color:#c9a84c;margin-bottom:6px">📊 本州税率 <span style="font-size:10px;color:var(--text-muted)">（当前：${taxCfg.label}）</span></div>
+            <div style="display:flex;gap:4px">${taxBtns}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:4px">轻税：税收×0.7，民心+5/年 &nbsp;|&nbsp; 重税：税收×1.3，民心-6/年</div>
+          </div>
+
+          <!-- 兴修水利 -->
+          <div style="background:rgba(0,0,0,0.15);border-radius:6px;padding:10px;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:600;color:#2ecc71;margin-bottom:6px">🌊 兴修水利 <span style="font-size:10px;color:var(--text-muted)">（已投入${irrigations}次，每次+3农业+2民心）</span></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">花费15万贯，永久提升本州农业产出和民心。</div>
+            <button onclick="prefIrrigate('${prefId}')" style="padding:5px 12px;font-size:11px;background:rgba(46,204,113,0.2);border:1px solid rgba(46,204,113,0.4);border-radius:4px;color:#2ecc71;cursor:pointer${remaining<15?' ;opacity:0.5':''}" ${remaining<15?'disabled':''}>
+              🌊 兴修水利（15万贯）
+            </button>
+          </div>
+
+          <!-- 招募乡勇 -->
+          <div style="background:rgba(0,0,0,0.15);border-radius:6px;padding:10px">
+            <div style="font-size:12px;font-weight:600;color:#e74c3c;margin-bottom:6px">🗡️ 招募乡勇 <span style="font-size:10px;color:var(--text-muted)">（当前${militia}千人，每次+1千人）</span></div>
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">花费10万贯，招募本州乡勇，提升城防和驻军。</div>
+            <button onclick="prefRecruitMilitia('${prefId}')" style="padding:5px 12px;font-size:11px;background:rgba(231,76,60,0.2);border:1px solid rgba(231,76,60,0.4);border-radius:4px;color:#e74c3c;cursor:pointer${remaining<10?' ;opacity:0.5':''}" ${remaining<10?'disabled':''}>
+              🗡️ 招募乡勇（10万贯）
+            </button>
+          </div>
+        </div>
+        <div class="mil-modal-footer">
+          <button class="mil-btn-cancel" onclick="closeMilModal('pref-detail-modal')">关闭</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function setPrefTaxRate(prefId, rate){
+  G.prefTaxRates[prefId] = rate;
+  const pref = PREFECTURES.find(p=>p.id===prefId);
+  const cfg = PREF_TAX_CONFIG[rate];
+  closeMilModal('pref-detail-modal');
+  addHistory(`📊 ${pref?pref.name:''}税率调整为${cfg.label}。`, 'neutral');
+  showToast(`${pref?pref.name:''}税率已调整为${cfg.label}`, 'info');
+  openPrefDetailModal(prefId);
+}
+
+function prefIrrigate(prefId){
+  const cost = 15;
+  if(G.budget - G.budgetUsed < cost){ showToast('预算不足', 'warn'); return; }
+  const pref = PREFECTURES.find(p=>p.id===prefId);
+  if(!pref) return;
+  spendBudget(cost);
+  G.prefIrrigations[prefId] = (G.prefIrrigations[prefId]||0) + 1;
+  pref.morale = Math.min(100, pref.morale + 2);
+  pref.development = Math.min(100, pref.development + 3);
+  pref.grain = Math.min(200, pref.grain + 10);
+  applyEffects({ agri:+2, people:+1 });
+  closeMilModal('pref-detail-modal');
+  addHistory(`🌊 ${pref.name}兴修水利完成，农业+2，民心+1，粮食+10万石。`, 'good');
+  showToast(`🌊 ${pref.name}水利兴修完成！`, 'info');
+  openPrefDetailModal(prefId);
+}
+
+function prefRecruitMilitia(prefId){
+  const cost = 10;
+  if(G.budget - G.budgetUsed < cost){ showToast('预算不足', 'warn'); return; }
+  const pref = PREFECTURES.find(p=>p.id===prefId);
+  if(!pref) return;
+  spendBudget(cost);
+  G.prefMilitia[prefId] = (G.prefMilitia[prefId]||0) + 1;
+  pref.troops = Math.min(30, pref.troops + 1);
+  pref.defense = Math.min(100, pref.defense + 3);
+  applyEffects({ military:+1, defense:+1 });
+  closeMilModal('pref-detail-modal');
+  addHistory(`🗡️ ${pref.name}招募乡勇1千人，驻军+1千，城防+3。`, 'good');
+  showToast(`🗡️ ${pref.name}乡勇招募完成！`, 'info');
+  openPrefDetailModal(prefId);
+}
+
+// 年度州郡税率效果结算
+function _applyPrefTaxEffects(){
+  PREFECTURES.forEach(p=>{
+    const rate = G.prefTaxRates[p.id] || 'normal';
+    const cfg = PREF_TAX_CONFIG[rate];
+    if(cfg.moraleBonus !== 0){
+      p.morale = Math.max(0, Math.min(100, p.morale + cfg.moraleBonus));
+    }
+    if(cfg.devBonus !== 0){
+      p.development = Math.max(0, Math.min(100, p.development + cfg.devBonus));
+    }
+    // 税收乘数影响实际税收（在calcAnnualTax中处理）
+  });
+}
+
+// ===================================================
+//  本轮B项：官员成长与派系
+// ===================================================
+const FACTION_OFFICIALS = {
+  civil:    ['cao_zhongda','lin_deyuan','xu_xuan','qian_weizhi','chen_yue'],
+  military: ['wu_yanfu','ding_deyu','zh_du','zd_du','ws_du','bj_du'],
+  clan:     ['qian_renqian','qian_hongchu','qian_inqian'],
+};
+
+// 年度官员成长（在任官员能力缓慢提升）
+function _doOfficialGrowth(){
+  G.officialGrowthLog = [];
+  const allOff = [...COURT_OFFICIALS,...CIVIL_OFFICIALS,...MILITARY_OFFICIALS];
+  allOff.forEach(o=>{
+    if(o.id==='qian_hongchu') return; // 国王不参与
+    // 在任官员每年有30%概率能力+1（上限95）
+    if(o.ability < 95 && Math.random() < 0.3){
+      o.ability = Math.min(95, o.ability + 1);
+      G.officialGrowthLog.push(o.name);
+    }
+  });
+  if(G.officialGrowthLog.length > 0){
+    addHistory(`📈 官员历练成长：${G.officialGrowthLog.slice(0,3).join('、')}等${G.officialGrowthLog.length}人能力有所提升。`, 'good');
+  }
+}
+
+// 年度派系平衡检查
+function _checkFactionBalance(){
+  if(!G.factions) G.factions = { civil:50, military:50, clan:50 };
+  const allOff = [...COURT_OFFICIALS,...CIVIL_OFFICIALS,...MILITARY_OFFICIALS];
+
+  // 根据各派系官员平均忠诚度更新派系影响力
+  ['civil','military','clan'].forEach(faction=>{
+    const ids = FACTION_OFFICIALS[faction] || [];
+    const members = allOff.filter(o=>ids.includes(o.id));
+    if(members.length === 0) return;
+    const avgLoyalty = members.reduce((s,o)=>s+o.loyalty,0)/members.length;
+    // 派系影响力向平均忠诚度靠拢
+    G.factions[faction] = Math.round(G.factions[faction] * 0.8 + avgLoyalty * 0.2);
+    G.factions[faction] = Math.max(10, Math.min(100, G.factions[faction]));
+  });
+
+  // 派系失衡检查：某派系影响力过高（>75）会影响稳定
+  const maxFaction = Math.max(G.factions.civil, G.factions.military, G.factions.clan);
+  const minFaction = Math.min(G.factions.civil, G.factions.military, G.factions.clan);
+  const imbalance = maxFaction - minFaction;
+
+  if(imbalance > 40){
+    const penalty = Math.floor(imbalance / 10);
+    applyEffects({ stability: -penalty });
+    addHistory(`⚠️ 朝中派系失衡（差距${imbalance}），政局稳定-${penalty}。需注意平衡各派势力。`, 'bad');
+  } else if(imbalance < 15){
+    applyEffects({ stability: +1 });
+  }
+}
+
+// ===================================================
+//  本轮E项：战争系统深化（地形/天气/粮道/占领）
+// ===================================================
+const WAR_TERRAIN_TYPES = [
+  { id:'plain',    label:'平原',   icon:'🌾', attackBonus:+5,  defenseBonus:0,   supplyBonus:+5  },
+  { id:'mountain', label:'山地',   icon:'⛰️', attackBonus:-8,  defenseBonus:+10, supplyBonus:-10 },
+  { id:'river',    label:'水网',   icon:'🌊', attackBonus:-5,  defenseBonus:+5,  supplyBonus:0   },
+  { id:'forest',   label:'林地',   icon:'🌲', attackBonus:-3,  defenseBonus:+8,  supplyBonus:-5  },
+  { id:'coast',    label:'沿海',   icon:'⛵', attackBonus:0,   defenseBonus:+3,  supplyBonus:+8  },
+];
+const WAR_WEATHER_TYPES = [
+  { id:'clear',   label:'晴天',   icon:'☀️', attackBonus:+3,  defenseBonus:0,   supplyBonus:+3  },
+  { id:'rain',    label:'雨天',   icon:'🌧️', attackBonus:-5,  defenseBonus:+3,  supplyBonus:-5  },
+  { id:'snow',    label:'大雪',   icon:'❄️', attackBonus:-10, defenseBonus:+5,  supplyBonus:-15 },
+  { id:'fog',     label:'大雾',   icon:'🌫️', attackBonus:-3,  defenseBonus:+8,  supplyBonus:0   },
+  { id:'storm',   label:'风暴',   icon:'⛈️', attackBonus:-8,  defenseBonus:+2,  supplyBonus:-10 },
+];
+
+// 获取战争地形（根据目标国家）
+function _getWarTerrain(targetId){
+  const terrainMap = {
+    nantang: 'river', zhou: 'plain', min: 'mountain', nan_han: 'coast', chu: 'forest'
+  };
+  const terrainId = terrainMap[targetId] || 'plain';
+  return WAR_TERRAIN_TYPES.find(t=>t.id===terrainId) || WAR_TERRAIN_TYPES[0];
+}
+
+// 获取随机天气
+function _getRandomWeather(){
+  return rand(WAR_WEATHER_TYPES);
+}
+
+// 战后占领州郡处理
+function _handleWarOccupation(war){
+  if(!war || war.warScore < 60) return; // 需要足够高的战争分数才能占领
+  const targetNation = NATIONS.find(n=>n.id===war.targetId);
+  if(!targetNation) return;
+
+  // 根据战争分数决定占领的州郡数量
+  const occupyCount = war.warScore >= 90 ? 2 : 1;
+  const targetPrefs = PREFECTURES.filter(p=>p.threat===war.targetId);
+  if(targetPrefs.length === 0) return;
+
+  const toOccupy = targetPrefs.slice(0, occupyCount);
+  toOccupy.forEach(pref=>{
+    if(!G.warOccupied.find(o=>o.prefId===pref.id)){
+      G.warOccupied.push({
+        prefId: pref.id,
+        name: pref.name,
+        turnOccupied: G.turn,
+        stability: 30, // 初始稳定度低
+        fromNation: war.targetId,
+      });
+      // 占领地区加入吴越版图（提升驻军和税收）
+      pref.troops = Math.max(pref.troops, 3);
+      pref.morale = Math.max(20, pref.morale - 20); // 被占领地区民心低
+      addHistory(`🏴 战争胜利！占领${pref.name}，该地区纳入吴越版图。需要时间稳定民心。`, 'good');
+    }
+  });
+  applyEffects({ prestige:+8, military:+3 });
+}
+
+// 年度占领地区稳定化
+function _doOccupiedStabilize(){
+  if(!G.warOccupied || G.warOccupied.length===0) return;
+  G.warOccupied.forEach(occ=>{
+    const pref = PREFECTURES.find(p=>p.id===occ.prefId);
+    if(!pref) return;
+    // 每年稳定度+5，民心缓慢恢复
+    occ.stability = Math.min(100, occ.stability + 5);
+    if(pref.morale < 60){
+      pref.morale = Math.min(60, pref.morale + 3);
+    }
+    // 稳定度达到80时，完全融入吴越
+    if(occ.stability >= 80){
+      addHistory(`✅ ${pref.name}已完全融入吴越，民心稳定，税收正常。`, 'good');
+      applyEffects({ stability:+2, people:+1 });
+    }
+  });
+  // 移除已完全稳定的占领地
+  G.warOccupied = G.warOccupied.filter(o=>o.stability < 80);
+}
+
 function _doEndYear(){
   // ── 税收结算 ──
   const taxReport = calcAnnualTax();
@@ -2982,6 +3743,15 @@ function _doEndYear(){
   _resolveSpyMissions();
   // 新E项：子嗣成长与储位检查
   _doHeirGrowth();
+  // 本轮C项：科技研发进度推进
+  _advanceTechResearch();
+  // 本轮A项：州郡税率年度效果
+  _applyPrefTaxEffects();
+  // 本轮B项：官员成长与派系平衡
+  _doOfficialGrowth();
+  _checkFactionBalance();
+  // 本轮E项：占领地区稳定化
+  _doOccupiedStabilize();
   // 重置本年移民标记
   G.migrationDone = false;
 
@@ -5098,7 +5868,10 @@ function startWar(targetId, selectedUnitIds){
     warScore: 0,       // >0 我方优势，<0 敌方优势
     cfg: cfg,
     territory: [...(cfg.territory||[])],
-    startTurn: G.turn
+    startTurn: G.turn,
+    // E项：地形与天气
+    terrain: _getWarTerrain(targetId),
+    weather: _getRandomWeather(),
   };
 
   // 外交影响
@@ -5239,6 +6012,20 @@ function renderBattleModal(){
       </div>`;
     })()}
 
+    ${(()=>{
+      const terrain = w.terrain || WAR_TERRAIN_TYPES[0];
+      const weather = w.weather || WAR_WEATHER_TYPES[0];
+      const tAtk = terrain.attackBonus>=0?`+${terrain.attackBonus}`:terrain.attackBonus;
+      const tDef = terrain.defenseBonus>=0?`+${terrain.defenseBonus}`:terrain.defenseBonus;
+      const wAtk = weather.attackBonus>=0?`+${weather.attackBonus}`:weather.attackBonus;
+      const wDef = weather.defenseBonus>=0?`+${weather.defenseBonus}`:weather.defenseBonus;
+      return `<div style="margin:4px 0;padding:5px 10px;background:rgba(0,0,0,0.15);border:1px solid rgba(255,255,255,0.1);border-radius:6px;font-size:10px;display:flex;gap:12px;align-items:center">
+        <span style="color:var(--text-muted)">${terrain.icon} ${terrain.label}：攻${tAtk} 守${tDef}</span>
+        <span style="color:rgba(255,255,255,0.3)">|</span>
+        <span style="color:var(--text-muted)">${weather.icon} ${weather.label}：攻${wAtk} 守${wDef}</span>
+      </div>`;
+    })()}
+
     <div class="war-actions-title">选择本回合战术：</div>
     <div class="war-actions-grid">${actionBtns}</div>
 
@@ -5279,14 +6066,24 @@ function executeBattleAction(actionId){
     });
   }
 
+  // ── E项：地形/天气加成 ──
+  const terrain = w.terrain || WAR_TERRAIN_TYPES[0];
+  const weather = w.weather || WAR_WEATHER_TYPES[0];
+  const terrainAtkBonus = terrain.attackBonus / 200;
+  const terrainDefBonus = terrain.defenseBonus / 200;
+  const weatherAtkBonus = weather.attackBonus / 200;
+  const weatherDefBonus = weather.defenseBonus / 200;
+  // 粮道加成（地形/天气影响物资消耗效率）
+  const supplyEfficiency = 1 + (terrain.supplyBonus + weather.supplyBonus) / 200;
+
   // ── 我方攻击 ──
   const myAttackRoll = Math.random();
-  const myHitChance = act.myBonus.hit + cmdBonus + troopBonus + (my.combat/200) + (my.morale/300) - (en.defense||0)/400;
+  const myHitChance = act.myBonus.hit + cmdBonus + troopBonus + (my.combat/200) + (my.morale/300) - (en.defense||0)/400 + terrainAtkBonus + weatherAtkBonus;
   const myHit = myAttackRoll < myHitChance;
 
   // ── 敌方反击 ──
   const enAttackRoll = Math.random();
-  const enHitChance = act.enemyBonus.hit + (en.combat/200) + (en.morale/300) - (my.defense||0)/400;
+  const enHitChance = act.enemyBonus.hit + (en.combat/200) + (en.morale/300) - (my.defense||0)/400 + terrainDefBonus + weatherDefBonus;
   const enHit = enAttackRoll < enHitChance;
 
   // ── 伤亡计算 ──
@@ -5324,8 +6121,9 @@ function executeBattleAction(actionId){
     logText += ` 敌军粮草受损，物资-${act.enemySupplyDmg||15}！`;
   }
 
-  // 物资消耗
-  my.supply = Math.max(0, my.supply - act.supplyUse);
+  // 物资消耗（E项：受地形/天气影响）
+  const adjustedSupplyUse = Math.max(1, Math.round(act.supplyUse / Math.max(0.5, supplyEfficiency)));
+  my.supply = Math.max(0, my.supply - adjustedSupplyUse);
   en.supply = Math.max(0, en.supply - Math.floor(Math.random()*6+3));
 
   // ── D项：每回合消耗全国粮草 ──
@@ -5609,6 +6407,8 @@ function endWar(result){
     type = 'good';
     const nation = NATIONS.find(n=>n.id===w.targetId);
     if(nation){ nation.relation = Math.max(0, nation.relation-20); nation.threat='low'; }
+    // E项：战后占领州郡
+    _handleWarOccupation(w);
 
   } else if(isDefeat){
     icon = result==='defeat_supply'?'🌾':'💀';
@@ -5750,6 +6550,15 @@ function serializeGame(){
     heirs: G.heirs,
     crownPrinceId: G.crownPrinceId,
     successionCrisis: G.successionCrisis,
+    // 本轮新增字段
+    techs: G.techs,
+    techInProgress: G.techInProgress,
+    prefTaxRates: G.prefTaxRates,
+    prefIrrigations: G.prefIrrigations,
+    prefMilitia: G.prefMilitia,
+    factions: G.factions,
+    officialGrowthLog: G.officialGrowthLog,
+    warOccupied: G.warOccupied,
     // 可变数据：官员、军队、州郡、外交
     officials: {
       court:    COURT_OFFICIALS.map(o=>({ id:o.id, age:o.age, loyalty:o.loyalty, ability:o.ability })),
@@ -5799,6 +6608,15 @@ function deserializeGame(data){
   G.heirs         = data.heirs || [];
   G.crownPrinceId = data.crownPrinceId || null;
   G.successionCrisis = data.successionCrisis || false;
+  // 本轮新增字段恢复
+  G.techs            = data.techs || {};
+  G.techInProgress   = data.techInProgress || null;
+  G.prefTaxRates     = data.prefTaxRates || {};
+  G.prefIrrigations  = data.prefIrrigations || {};
+  G.prefMilitia      = data.prefMilitia || {};
+  G.factions         = data.factions || { civil:50, military:50, clan:50 };
+  G.officialGrowthLog= data.officialGrowthLog || [];
+  G.warOccupied      = data.warOccupied || [];
 
   // 恢复官员可变属性
   if(data.officials){
