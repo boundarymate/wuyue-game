@@ -4454,8 +4454,16 @@ function startWar(targetId, selectedUnitIds){
   selectedUnits.forEach(u=>{ u._troopsBeforeWar = u.troops; u._moraleBeforeWar = u.morale; u.troops = 0; });
 
   // 统计出征部队兵种构成（用于B项兵种加成）
-  const troopTypeMap = {};
-  selectedUnits.forEach(u=>{ troopTypeMap[u.type] = (troopTypeMap[u.type]||0) + (u._troopsBeforeWar||u.troops); });
+  // 按各部队的兵种比例字段（infantry/cavalry/navy/archers/engineers）加权统计实际兵力
+  const troopTypeMap = { infantry:0, cavalry:0, navy:0, archers:0, engineers:0 };
+  selectedUnits.forEach(u=>{
+    const t = u._troopsBeforeWar || u.troops || 0;
+    troopTypeMap.infantry  += t * ((u.infantry  || 0) / 100);
+    troopTypeMap.cavalry   += t * ((u.cavalry   || 0) / 100);
+    troopTypeMap.navy      += t * ((u.navy      || 0) / 100);
+    troopTypeMap.archers   += t * ((u.archers   || 0) / 100);
+    troopTypeMap.engineers += t * ((u.engineers || 0) / 100);
+  });
 
   G.war = {
     targetId,
@@ -4609,14 +4617,25 @@ function renderBattleModal(){
       </div>
     </div>
 
-    <div style="margin:6px 0;padding:5px 10px;background:rgba(243,156,18,0.1);border:1px solid rgba(243,156,18,0.3);border-radius:6px;font-size:11px;display:flex;align-items:center;gap:8px">
-      <span>🌾 全国粮草：</span>
-      <div style="flex:1;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden">
-        <div style="height:100%;width:${Math.min(100,G.stats.grain)}%;background:${G.stats.grain>30?'#f39c12':G.stats.grain>10?'#e67e22':'#e74c3c'};border-radius:3px;transition:width 0.3s"></div>
-      </div>
-      <span style="color:${G.stats.grain>30?'#f39c12':G.stats.grain>10?'#e67e22':'#e74c3c'};font-weight:bold">${G.stats.grain}万石</span>
-      <span style="color:var(--text-muted);font-size:10px">每回合约耗${Math.max(1,Math.round(w.myForce.troops*0.5))}万石</span>
-    </div>
+    ${(()=>{
+      const grainPerRound = Math.max(1, Math.round(w.myForce.troops * 0.5));
+      const roundsLeft = grainPerRound > 0 ? Math.floor(G.stats.grain / grainPerRound) : 99;
+      const grainPct = Math.min(100, G.stats.grain);
+      const grainColor = G.stats.grain > 50 ? '#f39c12' : G.stats.grain > 20 ? '#e67e22' : '#e74c3c';
+      const urgency = roundsLeft <= 0 ? '⚠️ 粮草耗尽！' : roundsLeft <= 2 ? `⚠️ 仅剩${roundsLeft}回合！` : `约${roundsLeft}回合`;
+      const urgencyColor = roundsLeft <= 2 ? '#e74c3c' : 'var(--text-muted)';
+      const bgColor = roundsLeft <= 2 ? 'rgba(231,76,60,0.12)' : 'rgba(243,156,18,0.08)';
+      const borderColor = roundsLeft <= 2 ? 'rgba(231,76,60,0.4)' : 'rgba(243,156,18,0.25)';
+      return `<div style="margin:6px 0;padding:5px 10px;background:${bgColor};border:1px solid ${borderColor};border-radius:6px;font-size:11px;display:flex;align-items:center;gap:8px">
+        <span>🌾 粮草：</span>
+        <div style="flex:1;height:6px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden">
+          <div style="height:100%;width:${grainPct}%;background:${grainColor};border-radius:3px;transition:width 0.3s"></div>
+        </div>
+        <span style="color:${grainColor};font-weight:bold">${G.stats.grain}万石</span>
+        <span style="color:var(--text-muted)">-${grainPerRound}/回合</span>
+        <span style="color:${urgencyColor};font-weight:${roundsLeft<=2?'bold':'normal'}">${urgency}</span>
+      </div>`;
+    })()}
 
     <div class="war-actions-title">选择本回合战术：</div>
     <div class="war-actions-grid">${actionBtns}</div>
@@ -4749,7 +4768,153 @@ function executeBattleAction(actionId){
     checkWarEnd();
   }
 
+  // ── 随机战场事件（约每3回合触发一次）──
+  if(!G.war && w.round > 1) { renderBattleModal(); return; } // 战争已结束
+  if(Math.random() < 0.30 && w.round > 1){
+    triggerWarRandomEvent(w);
+  }
+
   renderBattleModal();
+}
+
+// ── 战场随机事件 ──────────────────────────────────
+const WAR_RANDOM_EVENTS = [
+  {
+    id:'rain', weight:15,
+    title:'大雨连绵',
+    icon:'🌧️',
+    apply(w){
+      const my = w.myForce, en = w.enemyForce;
+      my.combat = Math.max(20, my.combat - 5);
+      en.combat = Math.max(20, en.combat - 5);
+      // 骑兵多则我方受影响更大
+      const cavRatio = (w.troopTypeMap?.cavalry||0) / (Object.values(w.troopTypeMap||{}).reduce((s,v)=>s+v,1));
+      if(cavRatio > 0.2){ my.combat = Math.max(20, my.combat - 3); }
+      return `大雨连绵，道路泥泞，双方战力均下降。${cavRatio>0.2?'骑兵行动受阻，我军额外受损。':''}`;
+    }, type:'neutral'
+  },
+  {
+    id:'plague', weight:8,
+    title:'军中疫病',
+    icon:'🤒',
+    apply(w){
+      const my = w.myForce;
+      const loss = Math.max(1, Math.round(my.troops * 0.08));
+      my.troops = Math.max(1, my.troops - loss);
+      my.morale = Math.max(5, my.morale - 10);
+      my.supply = Math.max(0, my.supply - 10);
+      return `军中爆发疫病，损失${loss}千人，士气-10，物资-10。`;
+    }, type:'loss'
+  },
+  {
+    id:'desertion', weight:10,
+    title:'士卒逃亡',
+    icon:'🏃',
+    apply(w){
+      const my = w.myForce;
+      // 士气越低越容易逃亡
+      if(my.morale < 50){
+        const loss = Math.max(1, Math.round(my.troops * 0.06));
+        my.troops = Math.max(1, my.troops - loss);
+        my.morale = Math.max(5, my.morale - 8);
+        return `士气低落，${loss}千士卒趁夜逃亡，军心动摇。`;
+      }
+      return null; // 士气高时不触发
+    }, type:'loss'
+  },
+  {
+    id:'reinforcement', weight:12,
+    title:'援军抵达',
+    icon:'🚩',
+    apply(w){
+      const my = w.myForce;
+      const gain = Math.max(1, Math.round(2 + Math.random()*3));
+      my.troops += gain;
+      my.morale = Math.min(100, my.morale + 8);
+      w.warScore += 2;
+      return `后方援军${gain}千人抵达战场，士气大振！`;
+    }, type:'win'
+  },
+  {
+    id:'spy_intel', weight:12,
+    title:'细作传报',
+    icon:'🕵️',
+    apply(w){
+      const en = w.enemyForce;
+      en.supply = Math.max(0, en.supply - 12);
+      w.warScore += 2;
+      return `细作传来敌军粮道情报，我军截断敌军补给，敌方物资-12。`;
+    }, type:'win'
+  },
+  {
+    id:'enemy_reinforcement', weight:10,
+    title:'敌军援兵',
+    icon:'⚠️',
+    apply(w){
+      const en = w.enemyForce;
+      const gain = Math.max(1, Math.round(2 + Math.random()*4));
+      en.troops += gain;
+      en.morale = Math.min(100, en.morale + 10);
+      w.warScore -= 3;
+      return `敌方援军${gain}千人赶到，敌军士气大振，形势趋于不利！`;
+    }, type:'loss'
+  },
+  {
+    id:'supply_convoy', weight:10,
+    title:'粮草车队抵达',
+    icon:'🐂',
+    apply(w){
+      const my = w.myForce;
+      const grainGain = Math.max(5, Math.round(10 + Math.random()*10));
+      G.stats.grain = Math.min(999, G.stats.grain + grainGain);
+      my.supply = Math.min(100, my.supply + 15);
+      return `后方粮草车队抵达，补充粮草${grainGain}万石，物资+15。`;
+    }, type:'win'
+  },
+  {
+    id:'night_raid_enemy', weight:8,
+    title:'敌军夜袭',
+    icon:'🌙',
+    apply(w){
+      const my = w.myForce;
+      const loss = Math.max(1, Math.round(my.troops * 0.05));
+      my.troops = Math.max(1, my.troops - loss);
+      my.morale = Math.max(5, my.morale - 12);
+      w.warScore -= 2;
+      return `敌军趁夜偷袭我营，我军损失${loss}千人，士气-12，措手不及！`;
+    }, type:'loss'
+  },
+  {
+    id:'high_morale', weight:8,
+    title:'将士用命',
+    icon:'🔥',
+    apply(w){
+      const my = w.myForce;
+      my.morale = Math.min(100, my.morale + 15);
+      my.combat = Math.min(100, my.combat + 5);
+      w.warScore += 2;
+      return `${w.myForce.commanderName}亲临阵前鼓舞士气，将士用命，士气+15，战力+5！`;
+    }, type:'win'
+  }
+];
+
+function triggerWarRandomEvent(w){
+  // 加权随机选取事件
+  const pool = WAR_RANDOM_EVENTS;
+  const totalWeight = pool.reduce((s,e)=>s+e.weight, 0);
+  let r = Math.random() * totalWeight;
+  let event = pool[pool.length-1];
+  for(const e of pool){ r -= e.weight; if(r <= 0){ event = e; break; } }
+
+  const result = event.apply(w);
+  if(result === null) return; // 条件不满足，不触发
+
+  w.battleLog.push({
+    round: w.round,
+    text: `【${event.icon} ${event.title}】${result}`,
+    type: event.type
+  });
+  checkWarEnd();
 }
 
 // ── 战争结束判定 ──────────────────────────────────
